@@ -1,0 +1,553 @@
+{
+  "format": 1,
+  "art": {
+    "version": "v0.1.0",
+    "url": "https://github.com/007hacky007/horke-leto-remastered-art/releases/download/v0.1.0/Horke-Leto-Remastered-art-v0.1.0.zip",
+    "sha256": "c3a9e58936685cc75ed064993eddb0345117be539b42c0a9f7d3c95ef07b0c43"
+  },
+  "model": {
+    "native_scale": 3,
+    "pilot_scale": 3,
+    "postprocess": "identity",
+    "license": "BSD-3-Clause",
+    "files": [
+      {
+        "path": "tools/upscalers/realesrgan-20220424/models/realesr-animevideov3-x3.param",
+        "sha256": "d1a5755008791d09b57e3425fc9dd0bd26b00fdf79c606210bc0e693f8230881",
+        "bytes": 3173
+      },
+      {
+        "path": "tools/upscalers/realesrgan-20220424/models/realesr-animevideov3-x3.bin",
+        "sha256": "548a36f9c3f4ab8da56cd3b13badf23968bee207b396dad14d04b830e5f2ab2d",
+        "bytes": 1247368
+      }
+    ]
+  },
+  "runner_reference_sha256": "c1c35d92079085de96b9d547fd7e4464bc8a2e9ccf28d7b8c712d72ade91b7cc",
+  "upscalers": {
+    "macos": {
+      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip",
+      "sha256": "e0ad05580abfeb25f8d8fb55aaf7bedf552c375b5b4d9bd3c8d59764d2cc333a",
+      "runner_sha256": "c1c35d92079085de96b9d547fd7e4464bc8a2e9ccf28d7b8c712d72ade91b7cc"
+    },
+    "windows": {
+      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
+      "sha256": "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d",
+      "runner_sha256": "07e49f7cbb4ede01ae4dd4c399d3a7e5846e3d2085c3128eff881e55cb7b1a0c"
+    }
+  },
+  "disc": {
+    "cue_sha256": "1414e2fba410215ef0d8c2e19e8a63a796cfac9fc0bf95f7d0c8cd3536ffb19b",
+    "bin_sha256": "9f565b8164724900f9b964ca38658be87a125eb2a6685e694f9fb47d8e1926c3",
+    "track_layout": [
+      "TRACK 01 MODE1/2352",
+      "INDEX 01 00:00:00",
+      "TRACK 02 AUDIO",
+      "PREGAP 00:02:00",
+      "INDEX 01 32:48:06",
+      "TRACK 03 AUDIO",
+      "INDEX 00 38:11:25",
+      "INDEX 01 38:13:06"
+    ],
+    "bin_size": 421433712,
+    "volume_sectors": 147456,
+    "data_sectors": 147606,
+    "audio_sectors": 31575,
+    "key_file": "HL.EXE"
+  },
+  "files": {
+    "MAJER.CHR": "93d90e110e26f41f972660dc02629c6f74061f3f08bed701da8f0d76a9050d5a",
+    "GFX.GRP": "5dc344876f03a397f50265b74f0fa2526af01b15fca17b381a66149df876e007",
+    "DOS4GW.EXE": "580f164bd05b438262267a7e03984529b56e3096ee158d5d2b0e6f159520d4c3",
+    "DATA.ADB": "a6dc3de6b50de24f803ecebc7652a04a963fff07a6e97e8b1c52612d2d560a9b",
+    "HL.EXE": "6a42d37375f3646bb8f033e4f6383a5b2bca4f5d9175fd2856da4d447a0d731c",
+    "JOKES.CHR": "4c17f0f9ef3029651becb3abe73110b35c51916b95851bd50020ac813cf43904"
+  },
+  "audio": {
+    "2": "3cd20dddbc23bb23c9bd4b706abc684707b9bfb31141bc074050dff8419b4a68",
+    "3": "e17ca989d516a057e258e476a716402afc7f74dcac54a801dbe7d3108a7b8408"
+  },
+  "palette_variants": [
+    {
+      "resource": "14_10-O!.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A1-KAME@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A1-SEDA@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A2-BUDI@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A2-SEKE@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A5-BROK@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A5-PILA@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A5-PR-F@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A7-OP-B@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A8-PADL@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A9-MINC@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B1-OSTE@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "DOPREDU.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "DOZADU.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "INVE2-3.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "IOKO3PAN.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "NUZ@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "PIVO@.FLC",
+      "palette_source": "SELECT1.FLC",
+      "palette_sha256": "34d7ee31a51d96ee0cdc9cb16a12e2dfaf157baca86d1a2f1d0eeda8de207885",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B9-LUP!.FLC",
+      "palette_source": "B9-LUP!.FLC",
+      "palette_sha256": "41ae511078c2c4fad79e2457ee36a35c981d1ac2aa1f4afafcad339b5f68de3e",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "C22-KILL.FLC",
+      "palette_source": "C22-KILL.FLC",
+      "palette_sha256": "41ae511078c2c4fad79e2457ee36a35c981d1ac2aa1f4afafcad339b5f68de3e",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "INT-UNO!.FLC",
+      "palette_source": "INT-UNO!.FLC",
+      "palette_sha256": "41ae511078c2c4fad79e2457ee36a35c981d1ac2aa1f4afafcad339b5f68de3e",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A10-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "A3-H&V!!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A3-HRO!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A3-HROB.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A3-LI-H!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A3-MOR!!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A3-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "A4-PP!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A4-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "A5-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "A6-LIAN!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A6-P-ML!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A6-P-SP!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A6-PA-K!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A6-PP!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A6-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "A6-S-LA!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A7-LIAN!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A7-POPR!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A7-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "A7-S-LI!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A8-PP!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A8-PP-S!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "A8-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "B1-BR-B!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B1-BR-S!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B1-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "B2-KOUKA.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B2-MLU!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B2-PAL!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B2-ZC-M!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "IOKO3PAN.FLC",
+      "palette_source": "A1-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "M_LOD1.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "OS1-GO!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "X-B0-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "SIPKA1.FLC",
+      "palette_source": "MAX!.FLC",
+      "palette_sha256": "e46ab4f3797f9a795b58f9911feae67ee5e27b299347521f2a7d143b5ffd04e6",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "BLACB!.FLC",
+      "palette_source": "HL!.FLC",
+      "palette_sha256": "ec5c23030569162ae8302a9081197a8b67269cb0956506bda19d721d73927e07",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "SIPKA1.FLC",
+      "palette_source": "HL!.FLC",
+      "palette_sha256": "ec5c23030569162ae8302a9081197a8b67269cb0956506bda19d721d73927e07",
+      "usages": [
+        "overlay"
+      ]
+    }
+  ]
+}

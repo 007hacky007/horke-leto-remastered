@@ -1,0 +1,8 @@
+build/
+work/
+dist/
+tools/vendor/
+tools/audio/
+__pycache__/
+*.pyc
+.DS_Store

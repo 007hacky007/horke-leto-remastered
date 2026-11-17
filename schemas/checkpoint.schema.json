@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tick",
+    "scene",
+    "variables",
+    "inventory",
+    "active_dialogue",
+    "animation_positions",
+    "audio_positions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "tick": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "null only when the reference tick is unavailable"
+    },
+    "scene": {
+      "type": "string"
+    },
+    "variables": {
+      "description": "null means not observed in DOSBox"
+    },
+    "inventory": {
+      "description": "null means not observed in DOSBox"
+    },
+    "active_dialogue": {
+      "description": "null means not observed in DOSBox"
+    },
+    "animation_positions": {
+      "description": "null means not observed in DOSBox"
+    },
+    "audio_positions": {
+      "description": "null means not observed in DOSBox"
+    }
+  }
+}

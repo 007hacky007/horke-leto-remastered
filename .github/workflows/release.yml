@@ -1,0 +1,28 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    uses: ./.github/workflows/ci.yml
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-builder'
+          path: dist
+          merge-multiple: true
+      - name: Corresponding source
+        run: git archive --format=tar.gz --prefix=horke-leto-remastered/ --output=dist/horke-leto-remastered-source.tar.gz HEAD
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" dist/* --title "Horké léto Remastered $TAG" --notes-file RELEASE-NOTES.md

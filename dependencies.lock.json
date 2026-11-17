@@ -1,0 +1,97 @@
+{
+  "dependencies": [
+    {
+      "name": "doctest",
+      "url": "https://codeload.github.com/doctest/doctest/tar.gz/1da23a3e8119ec5cce4f9388e91b065e20bf06f5",
+      "sha256": "3ffeeefdd63fa4978a9a835b6007dcbe8d28de45411665285516b3490ca253df"
+    },
+    {
+      "name": "json",
+      "url": "https://codeload.github.com/nlohmann/json/tar.gz/55f93686c01528224f448c19128836e7df245f72",
+      "sha256": "67f4cdd9ca930c9c1e130af4a437c7fc98fab77a2846fc2d2a14b4943831f8ef"
+    },
+    {
+      "name": "stb",
+      "url": "https://codeload.github.com/nothings/stb/tar.gz/9600522de53973336fa033a289858a4354cbb04c",
+      "sha256": "8546b1281cf61e4b5229e9eb05055d765f1b076f6ba03aab377df09a20fb613b"
+    },
+    {
+      "name": "dr_libs",
+      "url": "https://codeload.github.com/mackron/dr_libs/tar.gz/f12e197fd462e4c22873fbd70d11b1d2f2c1dc3c",
+      "sha256": "65d6c9c34d9b03fe0c47536e0e83c764402230994c9a6633e6e9d3aa92be90ac"
+    },
+    {
+      "name": "SDL3-3.4.20",
+      "url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz",
+      "sha256": "f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f"
+    },
+    {
+      "name": "dejavu-fonts",
+      "url": "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2",
+      "sha256": "fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7"
+    }
+  ],
+  "tools": {
+    "macos-universal": {
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-macos-universal.tar.xz",
+      "sha256": "66cbd5178c4a71b0d473e68ede172f8eb7d15d023e67f39201d0a69e21f6bf3c"
+    },
+    "ubuntu-22.04-x86_64": {
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64.tar.xz",
+      "sha256": "919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926"
+    }
+  },
+  "flac": {
+    "version": "1.5.0",
+    "windows": {
+      "url": "https://github.com/xiph/flac/releases/download/1.5.0/flac-1.5.0-win.zip",
+      "sha256": "53f1500f0d6e7c61379d7fee50d4a9f7f504c650009506d9ba015530d76c0dde"
+    },
+    "source": {
+      "url": "https://github.com/xiph/flac/releases/download/1.5.0/flac-1.5.0.tar.xz",
+      "sha256": "f2c1c76592a82ffff8413ba3c4a1299b6c7ab06c734dee03fd88630485c2b920"
+    }
+  },
+  "licenses": [
+    {
+      "name": "runner-MIT.txt",
+      "url": "https://raw.githubusercontent.com/xinntao/Real-ESRGAN-ncnn-vulkan/37026f49824c5cf84062e7c6a5dd71445dcf610f/LICENSE",
+      "sha256": "5abb941454de437b0e90d78dcb72e3688f74e14bcd4e24393273cb5cd0e9c937"
+    },
+    {
+      "name": "model-BSD.txt",
+      "url": "https://raw.githubusercontent.com/xinntao/Real-ESRGAN/v0.2.5.0/LICENSE",
+      "sha256": "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2"
+    },
+    {
+      "name": "ncnn-BSD.txt",
+      "url": "https://raw.githubusercontent.com/Tencent/ncnn/20220420/LICENSE.txt",
+      "sha256": "6495f972a09ad7f64ccd953e79adba91a93d862edc7135e6d95210bbf4002a01"
+    },
+    {
+      "name": "MoltenVK-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/MoltenVK/v1.1.8/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "name": "FLAC-GPL.txt",
+      "url": "https://raw.githubusercontent.com/xiph/flac/1.5.0/COPYING.GPL",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    },
+    {
+      "name": "FLAC-Xiph.txt",
+      "url": "https://raw.githubusercontent.com/xiph/flac/1.5.0/COPYING.Xiph",
+      "sha256": "7866ee98760fc1f0156b4fe6bf530257e02be487ab3fd94e2b63799dd32d6b2c"
+    },
+    {
+      "name": "libogg-BSD.txt",
+      "url": "https://raw.githubusercontent.com/xiph/ogg/v1.3.6/COPYING",
+      "sha256": "d2ab5758336489da61c12cc5bb757da5339c4ae9001f9bb0562b4370249af814"
+    },
+    {
+      "name": "Python-PSF.txt",
+      "url": "https://raw.githubusercontent.com/python/cpython/v3.14.2/LICENSE",
+      "sha256": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231"
+    }
+  ]
+}

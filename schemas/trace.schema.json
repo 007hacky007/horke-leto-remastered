@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One JSONL trace record; order is stable within each tick",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "tick",
+        "kind"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "tick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": [
+            "key_down",
+            "key_up",
+            "mouse_down",
+            "mouse_up",
+            "mouse_move",
+            "text_input"
+          ]
+        },
+        "logical_x": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 639
+        },
+        "logical_y": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 479
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "button": {
+          "enum": [
+            "left",
+            "middle",
+            "right"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "key_down",
+                  "key_up"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "key"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "mouse_down",
+                  "mouse_up",
+                  "mouse_move"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "logical_x",
+              "logical_y"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "mouse_down",
+                  "mouse_up"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "button"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "text_input"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "text"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "tick",
+        "tool",
+        "args"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "tick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tool": {
+          "enum": [
+            "keys",
+            "mouse",
+            "wait_for",
+            "screenshot",
+            "focus_window"
+          ]
+        },
+        "args": {
+          "type": "object"
+        },
+        "result": {}
+      }
+    }
+  ]
+}

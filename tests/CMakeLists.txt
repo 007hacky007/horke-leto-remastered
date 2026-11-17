@@ -1,0 +1,6 @@
+file(GLOB UNIT_SOURCES CONFIGURE_DEPENDS unit/*_test.cpp)
+add_executable(hl-tests main.cpp ${UNIT_SOURCES})
+target_include_directories(hl-tests PRIVATE ../tools/vendor/doctest ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hl-tests PRIVATE hl-assets hl-le)
+add_test(NAME unit COMMAND hl-tests)
+set_tests_properties(unit PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

@@ -1,0 +1,101 @@
+name: Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    name: macOS builder (.dmg)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Tools and pinned dependencies
+        run: |
+          python -m pip install cmake ninja dmgbuild==1.6.7
+          python tools/distribution/fetch.py --platform macos
+      - name: Build and test (arm64)
+        run: |
+          cmake --preset macos-release
+          cmake --build --preset macos-release
+          ctest --test-dir build/macos-release --output-on-failure
+      - name: Package the disk image
+        run: |
+          python tools/distribution/package.py --platform macos
+          python tools/distribution/check.py build/payload-macos --platform macos
+          python tools/distribution/package.py --platform macos --payload build/payload-macos --bundle --version "${{ github.ref_type == 'tag' && github.ref_name || '0.0.0' }}"
+          "dist/Horke Leto Builder.app/Contents/MacOS/Horke Leto Builder" --self-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-builder
+          path: |
+            dist/Horke-Leto-Builder-macOS.dmg
+            dist/Horke-Leto-Builder-macOS.dmg.sha256
+  windows-build:
+    name: Windows builder (.exe, cross-compiled)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Tools, llvm-mingw and pinned dependencies
+        run: |
+          python -m pip install cmake ninja
+          python tools/distribution/fetch.py --platform windows --toolchain
+      - name: Cross-build x64
+        run: |
+          cmake --preset windows-release
+          cmake --build --preset windows-release
+      - name: Package the executable
+        run: |
+          python tools/distribution/package.py --platform windows
+          python tools/distribution/check.py build/payload-windows --platform windows --readobj tools/vendor/llvm-mingw/bin/llvm-readobj
+          python tools/distribution/package.py --platform windows --payload build/payload-windows --bundle --version "${{ github.ref_type == 'tag' && github.ref_name || '0.0.0' }}"
+          cp build/windows-release/builder/hb-tests.exe build/payload-windows/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-builder
+          path: |
+            dist/Horke-Leto-Builder-Windows.exe
+            dist/Horke-Leto-Builder-Windows.exe.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-tests
+          path: build/payload-windows
+  windows-test:
+    name: Windows tests
+    needs: windows-build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-tests
+          path: payload
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-builder
+          path: dist
+      - name: Engine and builder unit tests
+        shell: pwsh
+        run: |
+          Push-Location payload
+          ./hl-tests.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./hb-tests.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Pop-Location
+      - name: Builder self-check
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist/Horke-Leto-Builder-Windows.exe -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
+          exit $p.ExitCode

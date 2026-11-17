@@ -1,0 +1,14 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "title":"Horke Leto per-resource 3x PNG pack manifest",
+ "type":"object",
+ "required":["schema_version","resource","source_sha256","scale","logical_canvas","physical_canvas","frame_count","atlas_gutter","atlases","frames"],
+ "properties":{
+  "schema_version":{"const":1},"resource":{"type":"string","pattern":"^[A-Za-z0-9_!@+ .-]+[.]FLC$"},
+  "source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"scale":{"const":3},
+  "logical_canvas":{"const":[640,480]},"physical_canvas":{"const":[1920,1440]},"atlas_gutter":{"const":2},
+  "frame_count":{"type":"integer","minimum":1,"maximum":65535},
+  "atlases":{"type":"array","items":{"type":"object","required":["path","sha256","size"],"properties":{"path":{"type":"string","pattern":"^[A-Za-z0-9_.-]+[.]png$"},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"size":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"integer","minimum":5,"maximum":4096}}}}},
+  "frames":{"type":"array","items":{"type":"object","required":["frame","resource","indices_sha256","palette_sha256","effective_delay","usages"]}}
+ }
+}

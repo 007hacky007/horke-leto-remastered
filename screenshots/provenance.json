@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "fade_updates": 0,
+      "file": "chapter01-tent.png",
+      "hints": false,
+      "mode": "Remastered",
+      "rgba_sha256": "a8ed2c26db0f4e37c94d7a1e335390b00205b76ffb99bc7a03444c1fe9a212bc",
+      "save": "chapter01-start-final.hls",
+      "scene": "103s",
+      "tick": 944,
+      "dimensions": [
+        1920,
+        1440
+      ],
+      "sha256": "cc8bc1880e06b4a82863ccb9f6ea9b43d5f6348a7c71dec9434a3f7fadffd501",
+      "method": "Native engine scene renderer and SDL GPU self-readback before present",
+      "runtime": "M8 engine"
+    },
+    {
+      "fade_updates": 0,
+      "file": "chapter01-beach.png",
+      "hints": false,
+      "mode": "Remastered",
+      "rgba_sha256": "49981c0dde04aef2987013cc1ff3411ae97f59f3099a8a941bbd7153a12e4695",
+      "save": "chapter01-boat.hls",
+      "scene": "10g3",
+      "tick": 6894,
+      "png_sha256": "271174f1ba13095ee68ae288b9c6e110fefcb05be8a9f252db025c8e5ec88c8f",
+      "save_sha256": "1c4588d5fa9af16cf05332d9a77e1a91a2151367830e006528f8a537ed7bec26",
+      "independently_decoded_rgba_sha256": "49981c0dde04aef2987013cc1ff3411ae97f59f3099a8a941bbd7153a12e4695",
+      "dimensions": [
+        1920,
+        1440
+      ],
+      "sha256": "e240240c6e7db62ad794d13a049e87d5e3122c4c2d93ba7bc2df19faa77a89aa",
+      "method": "Native engine scene renderer and SDL GPU self-readback before present",
+      "runtime": "M8 engine"
+    },
+    {
+      "fade_updates": 0,
+      "file": "chapter02-hut.png",
+      "hints": false,
+      "mode": "Remastered",
+      "rgba_sha256": "e6774a795bd4bfba802816b100a10220295d9ead151db0122c32fcc2cc2d7e64",
+      "save": "chapter02-hut.hls",
+      "scene": "11tv",
+      "tick": 196674,
+      "dimensions": [
+        1920,
+        1440
+      ],
+      "sha256": "53dc76942bd925553250d033873a8c3979549eb9297f8ea8473936ba8645a233",
+      "method": "Native engine scene renderer and SDL GPU self-readback before present",
+      "runtime": "M8 engine"
+    },
+    {
+      "fade_updates": 0,
+      "file": "chapter03-boat.png",
+      "hints": false,
+      "mode": "Remastered",
+      "rgba_sha256": "ed84ae0331b698a26e558a05d724f2a4ce3178c225e7a626df7fb6a366977de5",
+      "save": "chapter03-boat-repaired-final.hls",
+      "scene": "123e",
+      "tick": 463079,
+      "dimensions": [
+        1920,
+        1440
+      ],
+      "sha256": "5509734e9cb1ac9dd9540194ce74a5ddf792a7e09676ffb9bfef8cb3dfe93e12",
+      "method": "Native engine scene renderer and SDL GPU self-readback before present",
+      "runtime": "M8 renderer with save-compatible M5 reconstruction"
+    },
+    {
+      "fade_updates": 0,
+      "file": "hints-space.png",
+      "hints": true,
+      "mode": "Remastered",
+      "rgba_sha256": "604089d357053a495d9572573aa4a859d824e02a2c4e3015efb8863e4e1e2675",
+      "save": "chapter01-start-final.hls",
+      "scene": "103s",
+      "tick": 944,
+      "dimensions": [
+        1920,
+        1440
+      ],
+      "sha256": "f94a67fd4aafed8d27b565d53f7d327cf5a28202f19fdd150c4e7c475b4c8919",
+      "method": "Native engine scene renderer and SDL GPU self-readback before present",
+      "runtime": "M8 engine"
+    },
+    {
+      "file": "original-vs-remastered.png",
+      "dimensions": [
+        3840,
+        1440
+      ],
+      "sha256": "3a980a613f6222d3f4095b73191ab57f9da84d780eb8ae00d5a67a2712cb778c",
+      "method": "Two native 1920x1440 self-readbacks placed side by side without resizing",
+      "scene": "103s",
+      "save": "chapter01-start-final.hls",
+      "tick": 944,
+      "left": "Original",
+      "right": "Remastered",
+      "state_unchanged_between_modes": true,
+      "source_rgba_sha256": {
+        "Original": "f768d93fb339268c6b1fc44d3f2484b7b3235b778d25dd9fb2314f66810bb9fa",
+        "Remastered": "a8ed2c26db0f4e37c94d7a1e335390b00205b76ffb99bc7a03444c1fe9a212bc"
+      }
+    },
+    {
+      "file": "builder-source.png",
+      "sha256": "cdd747689831db411192d1c181041141fd5638172367ab89e42bb0b6464c1d39",
+      "method": "Native builder demo mode (HB_DEMO), frames from a local build; renderer readback before present",
+      "runtime": "macOS builder"
+    },
+    {
+      "file": "builder-unpack.png",
+      "sha256": "f5434d05df5949ffa069fff6d54413c0f9ae4a18b3c3ac125d0373522a68fcc0",
+      "method": "Native builder demo mode (HB_DEMO), frames from a local build; renderer readback before present",
+      "runtime": "macOS builder"
+    },
+    {
+      "file": "builder-decrypt.png",
+      "sha256": "624971a4877fbc842ea43ae336e73a9bdb10006a1c36b327427f320de9786140",
+      "method": "Native builder demo mode (HB_DEMO), frames from a local build; renderer readback before present",
+      "runtime": "macOS builder"
+    },
+    {
+      "file": "builder-upscale.png",
+      "sha256": "c32f07834f70048255985f73f94ed188921012552173e1a2a9e3b618bf9c1fe0",
+      "method": "Native builder demo mode (HB_DEMO), frames from a local build; renderer readback before present",
+      "runtime": "macOS builder"
+    },
+    {
+      "file": "builder-done.png",
+      "sha256": "9d1b3927917ceff00632d759ddd221df6865bbff057e657a343654a1bf023b57",
+      "method": "Native builder demo mode (HB_DEMO), frames from a local build; renderer readback before present",
+      "runtime": "macOS builder"
+    }
+  ],
+  "excluded": "No B2 village-square capture",
+  "windows_builder_screenshots": "TODO: capture on Windows when a VM is available",
+  "limits": "Four captured rooms in chapters 1-3. Later palette associations are incomplete in the prepared packs; no full-game playback claim."
+}
