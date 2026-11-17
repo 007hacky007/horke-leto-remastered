@@ -1,4 +1,5 @@
 #include <doctest/doctest.h>
+#include <fstream>
 #include "render/graphics_mode.h"
 using namespace hl;
 TEST_SUITE("render.graphics_mode") {
@@ -22,5 +23,30 @@ TEST_CASE("an early F8 waits for ready textures without discarding the requested
  CHECK(c.frame_boundary(true));CHECK(c.mode()==GraphicsMode::Remastered);
  c.key("F8",true,false);c.key("F8",true,false);
  CHECK_FALSE(c.frame_boundary());CHECK(c.mode()==GraphicsMode::Remastered);
+}
+}
+TEST_SUITE("render.graphics_mode") {
+TEST_CASE("window preferences round trip and old settings keep automatic sizing") {
+ auto file=std::filesystem::temp_directory_path()/"hl-window-settings.json";
+ GraphicsSettings s;s.fullscreen=true;s.window_width=1280;s.window_height=960;
+ REQUIRE(save_graphics_settings(file,s).has_value());auto loaded=load_graphics_settings(file);REQUIRE(loaded.has_value());
+ CHECK(loaded.value().fullscreen);CHECK(loaded.value().window_width==1280);CHECK(loaded.value().window_height==960);
+ CHECK(graphics_menu(s).find("F11")!=std::string::npos);
+ {std::ofstream out(file);out<<R"({"schema_version":1,"graphics":"Original"})";}
+ loaded=load_graphics_settings(file);REQUIRE(loaded.has_value());CHECK_FALSE(loaded.value().fullscreen);CHECK(loaded.value().window_width==0);CHECK(loaded.value().window_height==0);
+ for(auto size:std::vector<std::pair<int,int>>{{-1,480},{640,0},{0,480}}){s.window_width=size.first;s.window_height=size.second;CHECK_FALSE(save_graphics_settings(file,s).has_value());
+  std::ofstream out(file);out<<nlohmann::json{{"schema_version",1},{"graphics","Original"},{"window_width",size.first},{"window_height",size.second}};out.close();CHECK_FALSE(load_graphics_settings(file).has_value());}
+ std::filesystem::remove(file);
+}
+TEST_CASE("startup chooses the largest integer scale in usable display coordinates") {
+ CHECK(choose_window_size(1920,1040,{})==WindowSize{1280,960});
+ CHECK(choose_window_size(2560,1440,{})==WindowSize{1920,1440});
+ CHECK(choose_window_size(1280,960,{})==WindowSize{1280,960});
+ CHECK(choose_window_size(1280,959,{})==WindowSize{640,480});
+ CHECK(choose_window_size(800,600,{})==WindowSize{640,480});
+ CHECK(choose_window_size(600,400,{})==WindowSize{600,400});
+ GraphicsSettings s;s.window_width=1000;s.window_height=700;
+ CHECK(choose_window_size(1920,1040,s)==WindowSize{1000,700});
+ CHECK(choose_window_size(800,600,s)==WindowSize{800,600});
 }
 }

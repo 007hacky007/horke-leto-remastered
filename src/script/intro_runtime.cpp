@@ -155,7 +155,7 @@ Result<void> IntroRuntime::settle() {
   if(!s.pending_overlay.empty()){
    if(screens_.size()>=16)return DataError{"",s.scene,0,"temporary screen nesting exceeds16"};auto name=std::move(s.pending_overlay);s.pending_overlay.clear();auto opened=open(s.data);if(!opened.has_value())return opened.error();auto child=std::move(opened.value()->state_);child->services=this;
    for(const auto& [key,value]:s.vm.globals()){auto r=child->vm.event_global(key,value,true);if(!r.has_value())return r;}
-   child->scene=std::move(name);child->tick=s.tick;child->inputs=s.inputs;child->trace=s.trace;child->dos_base=s.dos_base;child->dos_members=s.dos_members;child->inventory=s.inventory;child->removed_objects=s.removed_objects;child->extra_objects=s.extra_objects;child->region_overrides=s.region_overrides;child->strings=s.strings;child->integers=s.integers;child->palette=s.palette;child->source_palette=s.source_palette;child->render_palette=s.render_palette;child->palette_presenter=s.palette_presenter;child->cooperative_fades=s.cooperative_fades;child->initial_cooperative_fades=s.initial_cooperative_fades;child->cursor=s.cursor;child->character=s.character;child->character_id=s.character_id;child->char_x=s.char_x;child->char_y=s.char_y;child->char_direction=s.char_direction;
+   child->scene=std::move(name);child->pointer_x=s.pointer_x;child->pointer_y=s.pointer_y;child->tick=s.tick;child->inputs=s.inputs;child->trace=s.trace;child->dos_base=s.dos_base;child->dos_members=s.dos_members;child->inventory=s.inventory;child->removed_objects=s.removed_objects;child->extra_objects=s.extra_objects;child->region_overrides=s.region_overrides;child->strings=s.strings;child->integers=s.integers;child->palette=s.palette;child->source_palette=s.source_palette;child->render_palette=s.render_palette;child->palette_presenter=s.palette_presenter;child->cooperative_fades=s.cooperative_fades;child->initial_cooperative_fades=s.initial_cooperative_fades;child->cursor=s.cursor;child->character=s.character;child->character_id=s.character_id;child->char_x=s.char_x;child->char_y=s.char_y;child->char_direction=s.char_direction;
    screens_.push_back(std::move(state_));state_=std::move(child);auto r=state_->object(state_->scene);if(!r.has_value())return r.error();continue;
   }
   auto r=s.transition();if(!r.has_value())return r;if(s.pending_overlay.empty()&&!s.return_screen)return {};
@@ -453,7 +453,16 @@ Result<void> IntroRuntime::edit_key(std::string_view key){auto& s=*state_;if(!s.
  bool accepted=key=="enter"&&!e.bytes.empty();if(accepted)s.save_names[e.slot]=e.bytes;auto r=s.name_surface(*e.owner,s.save_names[e.slot]);if(!r.has_value())return r;
  e.waiter->stack.push_back(accepted?1:0);e.waiter->state=ProcessState::ready;s.name_editor.reset();return {};
 }
-Result<void> IntroRuntime::escape(){if(editing_save_name())return edit_key("escape");if(can_save()){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","escape"}});auto i=s.strings.find("escape_scr");if(i!=s.strings.end()&&!i->second.empty()){s.pending=i->second;return settle();}return {};}
+Result<void> IntroRuntime::escape(){
+ if(editing_save_name())return edit_key("escape");
+ bool gameplay=can_save();if(gameplay){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
+ auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","escape"}});auto i=s.strings.find("escape_scr");
+ if(i==s.strings.end()||i->second.empty())return {};
+ if(!screens_.empty()&&(i->second==s.scene||i->second==screens_.back()->scene))s.return_screen=true;
+ // The original main menu suspends gameplay even when saving is disallowed.
+ else if(i->second!=s.scene){if(gameplay||i->second=="126y")s.pending_overlay=i->second;else s.pending=i->second;}
+ return settle();
+}
 Result<std::vector<uint8_t>> IntroRuntime::rgba()const {auto surfaces=render_surfaces();if(!surfaces.has_value())return surfaces.error();return flatten_surfaces(std::move(surfaces.value()));}
 Result<std::vector<uint8_t>> IntroRuntime::indexed()const {std::vector<uint8_t> indices;auto surfaces=render_surfaces_impl(false,&indices);if(!surfaces.has_value())return surfaces.error();return indices;}
 Result<void> IntroRuntime::pointer(int x,int y){if(x<0||x>=640||y<0||y>=480)return DataError{"","pointer",0,"intro pointer outside logical canvas"};auto& s=*state_;if(s.inventory_open){nlohmann::json event{{"tick",s.tick},{"kind","pointer"},{"x",x},{"y",y}};if(!s.inputs.empty()&&s.inputs.back().at("kind")=="pointer"&&s.inputs.back().at("tick")==s.tick)s.inputs.back()=std::move(event);else s.inputs.push_back(std::move(event));}s.pointer_x=x;s.pointer_y=y;return {};}

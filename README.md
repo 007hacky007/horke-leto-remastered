@@ -46,6 +46,10 @@ silicon and on Windows 10 and 11, plus a builder that prepares the pictures:
   your game stays where it is.
 - **Hold Space** to show every spot you can click in the current scene. Handy
   when you have been staring at the same beach for ten minutes.
+- **F11** (or Alt+Enter, or Cmd+Ctrl+F on a Mac) switches fullscreen. The window
+  opens as large as fits your screen and remembers its size.
+- **Esc** opens the game's own menu (save, load, volume); Esc again returns to
+  the game. **F10** opens the graphics options.
 - The music from the CD and all the Czech voices are kept.
 
 | At the tent | On the beach |
@@ -182,6 +186,7 @@ mechaniku, a průvodce hru sestaví. Klávesa **F8** přepíná původní a pře
 grafiku, podržený **mezerník** ukáže všechna aktivní místa. Na Macu se průvodce
 poprvé otevře přes *Nastavení systému > Soukromí a zabezpečení > Přesto otevřít*
 (návod je přímo v okně disku), na Windows přes *Další informace > Přesto spustit*.
+Celou obrazovku přepneš klávesou **F11**.
 
 ## For developers
 
