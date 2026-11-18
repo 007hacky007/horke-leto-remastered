@@ -235,7 +235,8 @@ static void sign_game(const fs::path& app, bool verify = true) {
 
 static json missing_variant_specs(const fs::path& resources) {
     json missing = json::array();
-    for (auto& spec : builder_pins().at("palette_variants"))
+    auto pins = builder_pins();  // keep alive: the loop borrows from it
+    for (auto& spec : pins.at("palette_variants"))
         if (!fs::exists(resources / "packs" / "original" / "variants" / spec.at("palette_sha256").get<std::string>() / "flc" /
                         spec.at("resource").get<std::string>() / "index.json"))
             missing.push_back(spec);
@@ -281,20 +282,29 @@ static Upscaler prepare_upscaler(const fs::path& tools, const fs::path& work, co
 static void fill_palette_variants(const fs::path& tools, const fs::path& resources, const fs::path& work, const Emit& emit) {
     auto pins = builder_pins();
     auto missing = missing_variant_specs(resources);
-    if (missing.empty()) return;
-    emit("[detail] Doplňuji " + std::to_string(missing.size()) + " barevných variant, které starší verze nevytvořila");
     // Best effort: without them the game draws those pictures unscaled, so a failure here must not block the engine update.
-    try {
-    run_tool(tools, {"assets", "export-frames", "--data", (resources / "data").string(), "--out", (work / "frames").string(),
-                     "--report", (work / "frames-report.json").string()}, work / "export-frames.log");
-    auto upscaler = prepare_upscaler(tools, work, pins);
-    auto frames = read_json(work / "frames" / "index.json").at("resources");
-    build_palette_variants({work / "frames", work / "cache", resources / "packs" / "original", work / "evidence", emit}, upscaler, frames, missing,
-        [&](int done, int total, const std::string& name) { emit("[detail] Varianta " + std::to_string(done) + "/" + std::to_string(total) + ": " + name); });
+    if (!missing.empty()) try {
+        emit("[detail] Doplňuji " + std::to_string(missing.size()) + " barevných variant, které starší verze nevytvořila");
+        run_tool(tools, {"assets", "export-frames", "--data", (resources / "data").string(), "--out", (work / "frames").string(),
+                         "--report", (work / "frames-report.json").string()}, work / "export-frames.log");
+        auto upscaler = prepare_upscaler(tools, work, pins);
+        auto frames = read_json(work / "frames" / "index.json").at("resources");
+        build_palette_variants({work / "frames", work / "cache", resources / "packs" / "original", work / "evidence", emit}, upscaler, frames, missing,
+            [&](int done, int total, const std::string& name) { emit("[detail] Varianta " + std::to_string(done) + "/" + std::to_string(total) + ": " + name); });
     } catch (const std::exception& error) {
         emit(std::string("[detail] Barevné varianty se nepodařilo doplnit, hra ty obrázky ukáže nezvětšené: ") + error.what());
     }
     for (auto part : {"frames", "cache", "evidence", "upscaler"}) remove_tree(work / part);
+    json remaster = json::array();
+    for (auto& spec : pins.at("palette_variants"))
+        if (!fs::exists(resources / "packs" / "remastered" / "variants" / spec.at("palette_sha256").get<std::string>() / "flc" /
+                        spec.at("resource").get<std::string>() / "index.json"))
+            remaster.push_back(spec);
+    try {
+        build_remastered_variants({{}, {}, resources / "packs" / "original", resources / "packs" / "remastered", work / "cache", emit}, remaster);
+    } catch (const std::exception& error) {
+        emit(std::string("[detail] Varianty remasteru se nepodařilo doplnit: ") + error.what());
+    }
 }
 
 fs::path update_game(const fs::path& app, const Emit& emit) {

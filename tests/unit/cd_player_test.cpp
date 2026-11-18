@@ -28,3 +28,18 @@ TEST_CASE("CD looping retains the resampling remainder across INDEX01 wraps") {
  std::filesystem::remove_all(root);
 }
 }
+TEST_SUITE("audio.cd_player") {
+TEST_CASE("device playback cannot advance the saved CD clock or invalidate resume") {
+ auto root=std::filesystem::temp_directory_path()/"hl-cd-device";std::filesystem::create_directories(root);
+ std::vector<int16_t> pcm={16384,-16384,8192,-8192,0,0};REQUIRE(encode_flac(pcm,44100,2,root/"track2.flac").has_value());
+ {
+ CdPlayer cd;REQUIRE(cd.play(2,root/"track2.flac",false).has_value());
+ std::vector<float> out(8);REQUIRE(cd.mix_device(out,44100).has_value());CHECK(cd.position()==0);CHECK(cd.playing());
+ cd.stop();REQUIRE(cd.resume().has_value());out.resize(2);REQUIRE(cd.mix_device(out,44100).has_value());CHECK(out[0]==.5f);CHECK(cd.position()==0);
+ REQUIRE(cd.play(2,root/"track2.flac",true).has_value());REQUIRE(cd.mix_device(out,44100).has_value());
+ std::vector<float> logical(8);REQUIRE(cd.mix(logical,44100).has_value());
+ REQUIRE(cd.mix_device(out,44100).has_value());CHECK(out[0]==.25f);CHECK(cd.position()==1);
+ }
+ std::filesystem::remove_all(root);
+}
+}

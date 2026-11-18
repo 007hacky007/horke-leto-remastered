@@ -1,5 +1,7 @@
 #include "platform/app.h"
+#include "platform/audio_output.h"
 #include <cstdio>
+#include <mutex>
 #include "script/intro_runtime.h"
 #include "debug/replay.h"
 #include "platform/runtime_mouse.h"
@@ -21,6 +23,19 @@
 #include "stb_image_write.h"
 namespace hl {
 namespace {
+struct AudioPlayback {
+ IntroRuntime& game;std::mutex mutex;std::vector<float> pcm;std::optional<DataError> error;
+ uint64_t frames{};std::ofstream capture;
+ static void SDLCALL fill(void* userdata,SDL_AudioStream* stream,int additional,int){
+  if(additional<=0)return;auto& audio=*static_cast<AudioPlayback*>(userdata);std::lock_guard lock(audio.mutex);
+  if(audio.error)return;audio.pcm.resize((size_t(additional)+7)/8*2);
+  auto mixed=audio.game.mix_device_audio(audio.pcm);
+  if(!mixed.has_value()){audio.error=mixed.error();return;}
+  if(!SDL_PutAudioStreamData(stream,audio.pcm.data(),int(audio.pcm.size()*sizeof(float)))){audio.error=DataError{"","audio",0,SDL_GetError()};return;}
+  audio.frames+=audio.pcm.size()/2;
+  if(audio.capture.is_open())audio.capture.write(reinterpret_cast<const char*>(audio.pcm.data()),std::streamsize(audio.pcm.size()*sizeof(float)));
+ }
+};
 Result<void> write_json(const std::filesystem::path& file,const nlohmann::json& value) {std::ofstream out(file);out<<value.dump(2)<<'\n';if(!out)return DataError{"",file.filename().string(),0,"cannot write native evidence"};return {};}
 }
 std::vector<RenderSurface> options_surfaces(const std::vector<OptionRow>& rows,const BitmapFont& font,bool packed){
@@ -53,11 +68,11 @@ int run_native_app(const AppOptions& options) {
  if(window&&!SDL_ShowWindow(window)){std::cerr<<SDL_GetError()<<'\n';SDL_DestroyWindow(window);SDL_Quit();return 1;}
  auto renderer=Renderer::create(window,preference);
  if(!window||!renderer.has_value()){std::cerr<<SDL_GetError()<<'\n';SDL_DestroyWindow(window);SDL_Quit();return 1;}
- SDL_HideCursor();SDL_AudioSpec spec{SDL_AUDIO_F32,2,48000};auto stream=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,nullptr,nullptr);
- if(!stream||!SDL_ResumeAudioStreamDevice(stream)){std::cerr<<SDL_GetError()<<'\n';SDL_DestroyAudioStream(stream);renderer.value().reset();SDL_DestroyWindow(window);SDL_Quit();return 1;}
+ SDL_HideCursor();SDL_AudioStream* stream=nullptr;DiskAudioClock audio_clock;
  auto runtime=options.load_save.empty()?IntroRuntime::open(std::filesystem::u8path(options.data_path)):IntroRuntime::restore(std::filesystem::u8path(options.data_path),std::filesystem::u8path(options.load_save));
  if(!runtime.has_value()){std::cerr<<runtime.error().reason<<'\n';SDL_DestroyAudioStream(stream);renderer.value().reset();SDL_DestroyWindow(window);SDL_Quit();return 1;}
- auto& game=*runtime.value();game.set_save_directory(pref_path);Result<void> setup;
+ auto& game=*runtime.value();game.set_save_directory(pref_path);AudioPlayback playback{game};Result<void> setup;
+ auto checkpoint_game=[&]{std::lock_guard lock(playback.mutex);return game.checkpoint();};
  GraphicsControl graphics(settings);HelpCard help;bool menu_open=false,settings_dirty=true;
  std::optional<Pack> original,remastered;
  if(setup.has_value()&&!settings.developer_nearest){auto catalog=source_catalog(std::filesystem::u8path(options.data_path));if(!catalog.has_value())setup=catalog.error();else {
@@ -129,6 +144,7 @@ int run_native_app(const AppOptions& options) {
    auto row=point?option_at(game_settings_rows(graphics.settings(),usable.value(),font.value()),*point):std::nullopt;
    if(row){if(row->action==OptionAction::Help)help.show(SDL_GetTicks());else {auto applied=apply_option(window,graphics,*row);if(!applied.has_value())return applied;settings_dirty=true;}return {};}
   }
+  std::lock_guard lock(playback.mutex);
   if(event.type==SDL_EVENT_TEXT_INPUT)return game.text_input(event.text.text);
   if(event.type==SDL_EVENT_KEY_DOWN&&game.editing_save_name()){if(event.key.key==SDLK_RETURN)return game.edit_key("enter");if(event.key.key==SDLK_BACKSPACE)return game.edit_key("backspace");if(event.key.key==SDLK_ESCAPE)return game.edit_key("escape");return {};}
   if(event.type==SDL_EVENT_KEY_DOWN&&(event.key.key==SDLK_I||event.key.key==SDLK_TAB)&&!(event.key.mod&(SDL_KMOD_GUI|SDL_KMOD_CTRL|SDL_KMOD_ALT))){if(!event.key.repeat)return game.toggle_inventory();return {};}
@@ -140,10 +156,16 @@ int run_native_app(const AppOptions& options) {
   if(event.type==SDL_EVENT_MOUSE_MOTION||event.type==SDL_EVENT_MOUSE_BUTTON_DOWN)return dispatch_runtime_mouse(game,window,renderer.value()->sdl(),event,graphics.settings().scaling);
   return {};
  };
- uint64_t dropped_audio_chunks=0;
- uint64_t start=SDL_GetTicks(),updates=0,last_capture=UINT64_MAX,submitted_frames=0;bool quit=false;
+ if(!output.empty())playback.capture.open(output/"queued-audio.f32",std::ios::binary);
+ // Initial atlas loading must finish before the fixed update clock starts.
+ if(result.has_value())result=draw_game();
+ if(result.has_value()&&!SDL_RenderPresent(renderer.value()->sdl()))result=DataError{"","renderer",0,SDL_GetError()};
+ if(result.has_value()){
+ stream=open_audio_output(audio_clock,AudioPlayback::fill,&playback);
+ if(!stream){std::cerr<<SDL_GetError()<<'\n';SDL_DestroyAudioStream(stream);renderer.value().reset();SDL_DestroyWindow(window);SDL_Quit();return 1;}
+ }
+ uint64_t start=SDL_GetTicks(),updates=0,last_capture=UINT64_MAX;bool quit=false;
  help.launch(graphics,start);
- std::ofstream audio_file;if(!output.empty())audio_file.open(output/"queued-audio.f32",std::ios::binary);
  while(result.has_value()&&!quit&&!game.quit_requested()) {
   auto frame_begin=std::chrono::steady_clock::now();auto updates_before=updates;
   uint64_t elapsed=SDL_GetTicks()-start;
@@ -171,12 +193,9 @@ int run_native_app(const AppOptions& options) {
     result=input_event(input);
     if(!result.has_value())break;
    }
-   if(!result.has_value())break;result=game.update();++updates;if(!result.has_value())break;
-   // Keep at most ~85 ms queued: after a stall, catch-up audio would otherwise delay every later voice behind its subtitle.
-   auto audio=game.audio();constexpr int max_queued=48000*2*int(sizeof(float))*85/1000;
-   int queued=SDL_GetAudioStreamQueued(stream);if(queued<0){result=DataError{"","audio",0,SDL_GetError()};break;}
-   if(queued<max_queued){if(!SDL_PutAudioStreamData(stream,audio.data(),int(audio.size_bytes()))){result=DataError{"","audio",0,SDL_GetError()};break;}}else ++dropped_audio_chunks;
-   if(audio_file)audio_file.write(reinterpret_cast<const char*>(audio.data()),std::streamsize(audio.size_bytes()));submitted_frames+=audio.size()/2;
+   if(!result.has_value())break;
+   {std::lock_guard lock(playback.mutex);result=playback.error?Result<void>(*playback.error):game.update();}
+   ++updates;if(!result.has_value())break;
   }
   auto update_end=std::chrono::steady_clock::now();
   if(!result.has_value())break;
@@ -185,7 +204,7 @@ int run_native_app(const AppOptions& options) {
   auto draw_end=std::chrono::steady_clock::now();
   uint64_t bucket=elapsed/1000;
   if(!output.empty()&&last_capture!=bucket) {
-   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(game.checkpoint()));checkpoint["help_visible"]=help.visible(SDL_GetTicks());checkpoint["help_alpha"]=help.alpha(SDL_GetTicks());checkpoint["help_launches"]=graphics.settings().help_launches;checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["display_settings"]={{"fullscreen",graphics.settings().fullscreen},{"window_width",graphics.settings().window_width},{"window_height",graphics.settings().window_height},{"scaling",graphics.settings().scaling==ScalingMode::Fill?"fill":graphics.settings().scaling==ScalingMode::Whole?"whole":"stretch"},{"active_area_hints",graphics.settings().hints_enabled}};checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();checkpoint["inventory_corner"]=game.inventory_corner();checkpoint["inventory_icon"]=graphics.settings().inventory_icon;
+   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(checkpoint_game()));checkpoint["help_visible"]=help.visible(SDL_GetTicks());checkpoint["help_alpha"]=help.alpha(SDL_GetTicks());checkpoint["help_launches"]=graphics.settings().help_launches;checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["display_settings"]={{"fullscreen",graphics.settings().fullscreen},{"window_width",graphics.settings().window_width},{"window_height",graphics.settings().window_height},{"scaling",graphics.settings().scaling==ScalingMode::Fill?"fill":graphics.settings().scaling==ScalingMode::Whole?"whole":"stretch"},{"active_area_hints",graphics.settings().hints_enabled}};checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();checkpoint["inventory_corner"]=game.inventory_corner();checkpoint["inventory_icon"]=graphics.settings().inventory_icon;
    auto path=output/("tick-"+std::to_string(bucket*1000));auto captured=renderer.value()->readback();
    if(!captured.has_value()){result=captured.error();break;}
    auto model=game.rgba();if(!model.has_value()){result=model.error();break;}
@@ -206,10 +225,12 @@ int run_native_app(const AppOptions& options) {
 #endif
   prior_frame=frame_begin;if(replay&&elapsed>=end_ms)quit=true;SDL_Delay(1);
  }
+ int queued_at_exit=SDL_GetAudioStreamQueued(stream);SDL_DestroyAudioStream(stream);stream=nullptr;
+ if(playback.error)result=*playback.error;
  if(result.has_value()&&settings_dirty)result=save_graphics_settings(settings_file,graphics.settings());
- if(audio_file){audio_file.close();if(!audio_file)result=DataError{"","audio capture",0,"audio capture write failed"};}
+ if(playback.capture.is_open()){playback.capture.close();if(!playback.capture)result=DataError{"","audio capture",0,"audio capture write failed"};}
  if(!options.opcode_trace_path.empty()){std::ofstream out(std::filesystem::u8path(options.opcode_trace_path));for(const auto& entry:game.trace())out<<entry.dump()<<'\n';if(!out)result=DataError{"","trace",0,"opcode trace write failed"};}
- nlohmann::json report{{"macos_fullscreen_spaces",SDL_GetHintBoolean(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES,true)},{"runtime_frames",runtime_frames},{"max_update_backlog",max_update_backlog},{"runtime_timing_scope","actual loop including updates, input, audio submission, composition, present and any requested captures; frame intervals also include sleep"},{"options_open",menu_open},{"cursor_visible",SDL_CursorVisible()},{"quick_saves",quick_saves},{"quick_loads",quick_loads},{"schema_version",1},{"platform",SDL_GetPlatform()},{"sdl_version",SDL_GetVersion()},{"backend",renderer.value()->backend()},{"gpu_failure",renderer.value()->gpu_failure()},{"adapter",renderer.value()->adapter()},{"renderer_preference",preference},{"fade_steps",fade_steps},{"updates",updates},{"elapsed_ms",SDL_GetTicks()-start},{"audio_submitted_frames",submitted_frames},{"audio_dropped_chunks",dropped_audio_chunks},{"audio_rate",48000},{"audio_channels",2},{"audio_queued_bytes_at_exit",SDL_GetAudioStreamQueued(stream)},{"scene",game.scene()},{"graphics",graphics.mode()==GraphicsMode::Original?"Original":"Remastered"},{"texture_working_set_bytes",renderer.value()->cache_bytes()},{"exit_code",result.has_value()?0:1},{"capture_method","SDL GPU/renderer readback before present"},{"synchronization",replay?"original startup scripts advanced to stable 126y menu before timed route":"normal startup"}};
+ nlohmann::json report{{"macos_fullscreen_spaces",SDL_GetHintBoolean(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES,true)},{"runtime_frames",runtime_frames},{"max_update_backlog",max_update_backlog},{"runtime_timing_scope","actual loop including updates, input, audio submission, composition, present and any requested captures; frame intervals also include sleep"},{"options_open",menu_open},{"cursor_visible",SDL_CursorVisible()},{"quick_saves",quick_saves},{"quick_loads",quick_loads},{"schema_version",1},{"platform",SDL_GetPlatform()},{"sdl_version",SDL_GetVersion()},{"backend",renderer.value()->backend()},{"gpu_failure",renderer.value()->gpu_failure()},{"adapter",renderer.value()->adapter()},{"renderer_preference",preference},{"fade_steps",fade_steps},{"updates",updates},{"elapsed_ms",SDL_GetTicks()-start},{"audio_submitted_frames",playback.frames},{"audio_dropped_chunks",0},{"audio_rate",48000},{"audio_channels",2},{"audio_queued_bytes_at_exit",queued_at_exit},{"scene",game.scene()},{"graphics",graphics.mode()==GraphicsMode::Original?"Original":"Remastered"},{"texture_working_set_bytes",renderer.value()->cache_bytes()},{"exit_code",result.has_value()?0:1},{"capture_method","SDL GPU/renderer readback before present"},{"synchronization",replay?"original startup scripts advanced to stable 126y menu before timed route":"normal startup"}};
  if(!result.has_value()){auto e=result.error();report["error"]={{"object",e.resource},{"offset",e.byte_offset},{"reason",e.reason}};std::cerr<<e.resource<<":"<<e.byte_offset<<" "<<e.reason<<'\n';}
  SDL_DestroyAudioStream(stream);renderer.value().reset();SDL_DestroyWindow(window);SDL_Quit();report["resources_released"]=true;
  if(!options.report_path.empty()){auto saved=write_json(std::filesystem::u8path(options.report_path),report);if(!saved.has_value())return 1;}

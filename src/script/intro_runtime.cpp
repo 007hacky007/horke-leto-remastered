@@ -54,7 +54,8 @@ struct IntroRuntime::State {
  std::optional<TextOverlay> dialogue;std::string dialogue_text;uint64_t dialogue_voice{};Process* dialogue_waiter{};
  std::optional<ChoiceText> choices;bool suppress_speech{},speech_loop{};std::optional<int> speech_direction;std::optional<CharacterDefinition> speech_character;unsigned speech_frame{},speech_period{1},speech_countdown{},dialogue_ticks{};
  std::string pending_overlay;bool return_screen{};Process* overlay_waiter{};
- struct NameEditor {Object* owner{};Process* waiter{};int slot{};std::vector<uint8_t> bytes;};
+ // legacy_length mirrors the 1.0 editor, which kept the empty-slot placeholder as text, so replayed Enter keys keep their result.
+ struct NameEditor {Object* owner{};Process* waiter{};int slot{};std::vector<uint8_t> bytes;size_t legacy_length{};};
  std::optional<NameEditor> name_editor;std::map<int,std::vector<uint8_t>> save_names;int save_slot{-1},load_slot{-1};
  std::vector<float> audio;uint64_t audio_fraction{},tick{},scene_id{};std::string scene,pending,cursor;int pointer_x{},pointer_y{};int user_locks{},inventory_locks{},character_locks{1};bool quit{},screen_visible{true};
  mutable std::map<std::string,IndexedFrame> static_frames,cursor_frames;mutable std::map<std::string,std::vector<IndexedFrame>> character_frames;
@@ -223,14 +224,15 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
  auto arg=[&](unsigned from_bottom){return p.stack[p.stack.size()-count+from_bottom];};
  auto name=[&](unsigned n)->Result<std::string>{return s.resource(p,arg(n));};
  auto pop=[&]{p.stack.resize(p.stack.size()-count);};
+ constexpr std::string_view empty_name="Tato pozice zat\xA1m nem\xA0 jm\x82no";
  if(op==151||op==152||op==155||op==156){
   int slot=arg(0);if(slot<0||slot>9)return fail("save slot outside0..9");if(save_directory_.empty()&&!reconstructing_)return fail("save directory is not configured");
   if(op==155||op==156){auto path=save_directory_/("slot-"+std::to_string(slot)+".hls");
-   if(!s.save_names.contains(slot)){constexpr std::string_view empty_name="Tato pozice zat\xA1m nem\xA0 jm\x82no";std::vector<uint8_t> bytes(empty_name.begin(),empty_name.end());
+   if(!s.save_names.contains(slot)){std::vector<uint8_t> bytes(empty_name.begin(),empty_name.end());
     try{if(reconstructing_){if(slot_query_cursor_>=slot_queries_.size()||slot_queries_[slot_query_cursor_].at("slot")!=slot)return fail("slot query history differs");bytes=slot_queries_[slot_query_cursor_++].at("bytes").get<std::vector<uint8_t>>();}
      else {if(std::filesystem::exists(path)){auto saved=load_game(path,s.data_identity);if(!saved.has_value())return saved.error();bytes=saved.value().reconstruction.value("slot_name",bytes);}slot_queries_.push_back({{"slot",slot},{"bytes",bytes}});}
     }catch(const nlohmann::json::exception&){return fail("invalid save slot name");}if(bytes.size()>50)return fail("save slot name exceeds50 glyphs");s.save_names[slot]=std::move(bytes);}
-   if(op==156){if(s.name_editor)return fail("save name editor already active");if(!o.picture)return fail("save name editor has no label surface");s.name_editor=State::NameEditor{&o,&p,slot,s.save_names[slot]};p.state=ProcessState::waiting;}
+   if(op==156){if(s.name_editor)return fail("save name editor already active");if(!o.picture)return fail("save name editor has no label surface");auto& current=s.save_names[slot];bool placeholder=current==std::vector<uint8_t>(empty_name.begin(),empty_name.end());s.name_editor=State::NameEditor{&o,&p,slot,placeholder?std::vector<uint8_t>{}:current,current.size()};auto shown=s.name_surface(o,s.name_editor->bytes);if(!shown.has_value())return shown.error();p.state=ProcessState::waiting;}
    else {auto r=s.name_surface(o,s.save_names[slot]);if(!r.has_value())return r.error();}
   }else {if(op==151)s.load_slot=slot;else s.save_slot=slot;p.state=ProcessState::terminated;}
   pop();return p.state==ProcessState::waiting?StepOutcome::yielded:p.state==ProcessState::terminated?StepOutcome::terminated:StepOutcome::running;
@@ -306,7 +308,7 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
   auto b=s.db.read(text.value());if(!b.has_value())return b.error();auto raw=decrypt_game_text(b.value());auto plain=decode_game_text(raw,GameEncoding::kamenicky);if(!plain.has_value())return plain.error();
   std::vector<uint8_t> bytes;for(auto c:raw)bytes.push_back(std::to_integer<uint8_t>(c));auto overlay=make_text_overlay(s.font,bytes,x,y);if(!overlay.has_value())return overlay.error();
   uint64_t voice=0;s.dialogue_ticks=0;
-  if(op==117){auto sound=name(2);if(!sound.has_value())return sound.error();auto file=s.alias(sound.value());if(!file.has_value())return file.error();auto sample=s.archive.read(file.value());if(!sample.has_value())return sample.error();auto pcm=decode_wav(sample.value());if(!pcm.has_value())return pcm.error();prepare_dos_sample(pcm.value(),s.integers.at("music_volume"));auto played=s.mixer.play(pcm.value(),1,0);if(!played.has_value())return played.error();voice=played.value();}
+  if(op==117){auto sound=name(2);if(!sound.has_value())return sound.error();auto file=s.alias(sound.value());if(!file.has_value())return file.error();auto sample=s.archive.read(file.value());if(!sample.has_value())return sample.error();auto pcm=decode_wav(sample.value());if(!pcm.has_value())return pcm.error();prepare_dos_sample(pcm.value(),s.integers.at("music_volume"));auto played=s.mixer.play(pcm.value(),1,0,1,100,s.dialogue_voice);if(!played.has_value())return played.error();voice=played.value();}
   else {if(op==116)return fail("filtered timed speech is not yet bound");int speed=s.integers.contains("text_speed")?s.integers.at("text_speed"):70;static constexpr int rates[]={0,631,398,251,158,100,63,40,25,16,10};if(speed<10||speed>100)return fail("invalid text speed");size_t length=std::find(bytes.begin(),bytes.end(),0)-bytes.begin();s.dialogue_ticks=unsigned(std::max(size_t(20),length)*size_t(rates[speed/10])/41+1);}
   auto direction=speech_animation_direction(s.char_direction,s.suppress_speech);if(direction){auto r=s.begin_speech_animation(*direction,true);if(!r.has_value())return r.error();}else if(s.speech_loop)s.speech_direction.reset();
   s.dialogue=std::move(overlay.value());s.dialogue_text=plain.value();s.dialogue_voice=voice;s.dialogue_waiter=&p;p.state=ProcessState::waiting;pop();return StepOutcome::yielded;
@@ -358,6 +360,13 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
  else if(op==163)s.suppress_speech=true;
  else return fail("unbound DOS service "+std::to_string(op));
  return StepOutcome::running;
+}
+Result<void> IntroRuntime::mix_device_audio(std::span<float> output){
+ if(output.size()%2)return DataError{"","audio",0,"incomplete stereo frame"};
+ auto& s=*state_;s.mixer.mix_device(output);std::vector<float> music(output.size());
+ auto cd=s.cd.mix_device(music,48000);if(!cd.has_value())return cd;
+ for(size_t i=0;i<output.size();++i)output[i]=std::clamp(output[i]+music[i],-1.f,1.f);
+ return {};
 }
 Result<void> IntroRuntime::update() {
  auto& s=*state_;++s.tick;
@@ -471,12 +480,12 @@ Result<void> IntroRuntime::click(int x,int y,bool right){
 
 bool IntroRuntime::editing_save_name()const{return state_->name_editor.has_value();}
 Result<void> IntroRuntime::text_input(std::string_view text){auto& s=*state_;if(!s.name_editor)return {};auto bytes=name_bytes(text);if(!bytes.has_value())return bytes.error();auto& e=*s.name_editor;
- s.inputs.push_back({{"tick",s.tick},{"kind","text"},{"text",text}});auto count=std::min(bytes.value().size(),50-e.bytes.size());e.bytes.insert(e.bytes.end(),bytes.value().begin(),bytes.value().begin()+count);return s.name_surface(*e.owner,e.bytes);
+ s.inputs.push_back({{"tick",s.tick},{"kind","text"},{"text",text}});e.legacy_length+=std::min(bytes.value().size(),50-std::min<size_t>(50,e.legacy_length));auto count=std::min(bytes.value().size(),50-e.bytes.size());e.bytes.insert(e.bytes.end(),bytes.value().begin(),bytes.value().begin()+count);return s.name_surface(*e.owner,e.bytes);
 }
 Result<void> IntroRuntime::edit_key(std::string_view key){auto& s=*state_;if(!s.name_editor)return {};if(key!="backspace"&&key!="enter"&&key!="escape")return DataError{"","save name",0,"unknown editor key"};auto& e=*s.name_editor;
  if(key!="backspace"&&e.waiter->stack.size()>=100)return DataError{"","save name",0,"editor result stack overflow"};s.inputs.push_back({{"tick",s.tick},{"kind","edit_key"},{"key",key}});
- if(key=="backspace"){if(!e.bytes.empty())e.bytes.pop_back();return s.name_surface(*e.owner,e.bytes);}
- bool accepted=key=="enter"&&!e.bytes.empty();if(accepted)s.save_names[e.slot]=e.bytes;auto r=s.name_surface(*e.owner,s.save_names[e.slot]);if(!r.has_value())return r;
+ if(key=="backspace"){if(!e.bytes.empty())e.bytes.pop_back();if(e.legacy_length)--e.legacy_length;return s.name_surface(*e.owner,e.bytes);}
+ bool accepted=key=="enter"&&e.legacy_length>0;if(accepted&&!e.bytes.empty())s.save_names[e.slot]=e.bytes;auto r=s.name_surface(*e.owner,s.save_names[e.slot]);if(!r.has_value())return r;
  e.waiter->stack.push_back(accepted?1:0);e.waiter->state=ProcessState::ready;s.name_editor.reset();return {};
 }
 Result<void> IntroRuntime::escape(){

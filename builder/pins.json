@@ -1832,6 +1832,177 @@
       "usages": [
         "overlay"
       ]
+    },
+    {
+      "resource": "A10-KAM!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B11-B-P!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B11-B-Z!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B11-O-B!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B11-Z-B!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B12-OSV!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B2-LE-H!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B2-U-KO!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B5-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "B6-PP!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B6-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "B6-STRO!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B7-SPAD!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B7-STRO!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B7-TRH!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B7-UTR!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "B8-PZ!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay",
+        "opaque_base"
+      ]
+    },
+    {
+      "resource": "B8-S-SL!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "ODJE2-!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "X-B5-OT!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
+    },
+    {
+      "resource": "X-BEZKL!.FLC",
+      "palette_source": "C22-PZ!.FLC",
+      "palette_sha256": "dce18e481fb31db303be41d0550f6ab2b826efda184340591bd3f188fca3e6dc",
+      "usages": [
+        "overlay"
+      ]
     }
   ],
   "updates": {

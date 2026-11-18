@@ -56,6 +56,8 @@ public:
 #endif
  Result<void> pointer(int x,int y);
  std::span<const float> audio()const;
+ // The host serializes this with updates/input when mixing on an audio thread.
+ Result<void> mix_device_audio(std::span<float> output);
  Checkpoint checkpoint()const;
  nlohmann::json geometry()const;
  std::vector<LogicalPoint> active_areas()const;

@@ -277,38 +277,80 @@ void build_remastered(const RemasteredPaths& paths, const Upscaler& upscaler,
 }
 
 namespace hb {
+// True when the palette change leaves the Original upscale visually the same (only unused colours differ).
+static bool palette_invisible(const fs::path& base, const fs::path& variant) {
+    auto a = read_json(base / "index.json"), b = read_json(variant / "index.json");
+    if (a.at("frames").size() != b.at("frames").size()) return false;
+    std::map<std::string, Image> pages;
+    auto page = [&](const fs::path& dir, const std::string& leaf) -> Image& {
+        auto key = (dir / leaf).string();
+        if (!pages.count(key)) pages[key] = load_png(dir / leaf, 4);
+        return pages[key];
+    };
+    for (size_t i = 0; i < a.at("frames").size(); ++i)
+        for (auto& [usage, x] : a.at("frames")[i].at("usages").items()) {
+            if (!b.at("frames")[i].at("usages").contains(usage)) return false;
+            auto& y = b.at("frames")[i].at("usages").at(usage);
+            if (x.value("pixel_sha256", "") == y.value("pixel_sha256", "")) continue;
+            auto& r = x.at("rect");
+            auto& s = y.at("rect");
+            if (r[2] != s[2] || r[3] != s[3]) return false;
+            auto p = crop(page(base, x.at("atlas")), r[0], r[1], r[2], r[3]), q = crop(page(variant, y.at("atlas")), s[0], s[1], s[2], s[3]);
+            double sum = 0; size_t off = 0, n = p.px.size() / 4;
+            for (size_t k = 0; k < p.px.size(); k += 4) {
+                int worst = 0;
+                for (int c = 0; c < 3; ++c) { int d = std::abs(int(p.px[k + c]) - int(q.px[k + c])); sum += d; worst = std::max(worst, d); }
+                if (worst > 24) ++off;
+            }
+            if (n && (sum / (3.0 * n) >= 1.0 || off * 200 > n)) return false;
+        }
+    return true;
+}
+
+// Remastered variants from the packs alone (also used when updating an installed game):
+// animations get graded copies of the Original variant, static redraws a copy of the redraw when the palette change is invisible.
 void build_remastered_variants(const RemasteredPaths& paths, const json& specs) {
-    auto manifest = read_json(paths.art / "manifest.json");
-    auto& gain = manifest.at("grade_rgb_gain");
-    std::array<double, 3> gains{gain[0].get<double>(), gain[1].get<double>(), gain[2].get<double>()};
     for (auto& spec : specs) {
         check_cancelled();
         std::string name = spec.at("resource"), identity = spec.at("palette_sha256");
         auto source = paths.original / "variants" / identity / "flc" / name;
-        if (!manifest.at("animations").contains(name) || !fs::exists(source / "index.json")) continue;
-        if (!fs::exists(paths.output / "flc" / name / "index.json")) continue;
-        auto index = read_json(source / "index.json");
-        if (index.at("frame_count").get<int>() <= 1) continue;
+        auto base = paths.output / "flc" / name;
+        if (!fs::exists(source / "index.json") || !fs::exists(base / "index.json")) continue;
+        auto base_index = read_json(base / "index.json");
         auto target = paths.output / "variants" / identity / "flc" / name;
-        remove_tree(target);
-        fs::create_directories(target);
-        std::map<std::string, Image> graded;
-        for (auto& atlas : index.at("atlases")) {
-            std::string leaf = atlas.at("path");
-            auto page = grade(load_png(source / leaf, 4), gains);
-            save_png(page, target / leaf);
-            atlas["sha256"] = sha_file(target / leaf);
-            graded[leaf] = std::move(page);
-        }
-        for (auto& frame : index.at("frames"))
-            for (auto& [usage, asset] : frame.at("usages").items()) {
-                auto& r = asset.at("rect");
-                asset["pixel_sha256"] = sha_bytes(crop(graded.at(asset.at("atlas").get<std::string>()), r[0], r[1], r[2], r[3]).px);
+        if (base_index.at("frame_count").get<int>() > 1 && base_index.contains("grade_rgb_gain")) {
+            auto& gain = base_index.at("grade_rgb_gain");
+            std::array<double, 3> gains{gain[0].get<double>(), gain[1].get<double>(), gain[2].get<double>()};
+            auto index = read_json(source / "index.json");
+            remove_tree(target);
+            fs::create_directories(target);
+            std::map<std::string, Image> graded;
+            for (auto& atlas : index.at("atlases")) {
+                std::string leaf = atlas.at("path");
+                auto page = grade(load_png(source / leaf, 4), gains);
+                save_png(page, target / leaf);
+                atlas["sha256"] = sha_file(target / leaf);
+                graded[leaf] = std::move(page);
             }
-        index["mode"] = "Remastered";
-        index["grade_rgb_gain"] = gain;
-        write_json(target / "index.json", index);
+            for (auto& frame : index.at("frames"))
+                for (auto& [usage, asset] : frame.at("usages").items()) {
+                    auto& r = asset.at("rect");
+                    asset["pixel_sha256"] = sha_bytes(crop(graded.at(asset.at("atlas").get<std::string>()), r[0], r[1], r[2], r[3]).px);
+                }
+            index["mode"] = "Remastered";
+            index["grade_rgb_gain"] = gain;
+            write_json(target / "index.json", index);
+        } else if (base_index.at("frame_count").get<int>() <= 1) {
+            if (!palette_invisible(paths.original / "flc" / name, source)) continue;
+            remove_tree(target);
+            fs::create_directories(target);
+            for (auto& atlas : base_index.at("atlases")) fs::copy_file(base / atlas.at("path").get<std::string>(), target / atlas.at("path").get<std::string>());
+            for (auto& frame : base_index.at("frames")) frame["palette_sha256"] = identity;
+            base_index["static_redraw_palette_copy"] = true;
+            write_json(target / "index.json", base_index);
+        } else continue;
         update_variant_catalog(paths.output, identity, name);
+        paths.log("[detail] Remaster " + name + " v paletě " + identity.substr(0, 8));
     }
 }
 }

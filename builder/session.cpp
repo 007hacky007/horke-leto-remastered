@@ -66,8 +66,10 @@ std::vector<fs::path> known_games() {
     };
     try {
         auto path = games_file();
-        if (!path.empty() && fs::exists(path))
-            for (auto& g : read_json(path).at("games")) add(fs::u8path(g.get<std::string>()));
+        if (!path.empty() && fs::exists(path)) {
+            auto known = read_json(path);  // keep alive: the loop borrows from it
+            for (auto& g : known.at("games")) add(fs::u8path(g.get<std::string>()));
+        }
     } catch (...) {}
 #ifdef _WIN32
     const char* name = "HorkeLeto";

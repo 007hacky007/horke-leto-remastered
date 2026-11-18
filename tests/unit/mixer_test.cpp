@@ -27,3 +27,15 @@ TEST_CASE("repeating PCM keeps completion tied to its last repeated sample") {
  Mixer m(2);PcmAudio pcm;pcm.rate=2;pcm.channels=1;pcm.frames=2;pcm.samples={16384,-16384};auto id=m.play(pcm,1,0,2);REQUIRE(id.has_value());std::vector<float> out(6);m.mix(out);CHECK(out==std::vector<float>{.5f,.5f,-.5f,-.5f,.5f,.5f});CHECK_FALSE(m.finished(id.value()));out.resize(2);m.mix(out);CHECK(m.finished(id.value()));
 }
 }
+
+TEST_SUITE("audio.mixer") {
+TEST_CASE("device playback retains the last word while sequential speech starts") {
+ Mixer m(4);PcmAudio pcm;pcm.rate=4;pcm.channels=1;pcm.frames=4;pcm.samples={4096,8192,12288,16384};
+ auto first=m.play(pcm).value();std::vector<float> out(4);m.mix(out);
+ out.resize(2);m.mix_device(out);CHECK(out==std::vector<float>{.375f,.375f});CHECK(m.position(first)==2);
+ out.resize(4);m.mix(out);REQUIRE(m.finished(first));
+ REQUIRE(m.play(pcm,0).has_value());
+ auto next=m.play(pcm,1,0,1,100,first).value();m.mix_device(out);
+ CHECK(out==std::vector<float>{.5f,.5f,.125f,.125f});CHECK(m.position(next)==0);
+}
+}
