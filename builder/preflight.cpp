@@ -105,7 +105,7 @@ static Check check_network(const json& pins, const fs::path& archive) {
 
 static Check check_art(const json& pins, const fs::path& archive) {
     Check c{"art", "Kontrolní součet remaster dat"};
-    if (archive.empty()) { c.text = "SHA-256 ověřeno hned po stažení."; return c; }
+    if (archive.empty()) { c.text = "SHA-256 ověříme hned po stažení."; return c; }
     if (sha_file(archive) != pins.at("art").at("sha256").get<std::string>()) {
         c.state = Check::Fail; c.text = "Archiv má jiný kontrolní součet.";
         c.hint = "Stáhni přesně verzi " + pins.at("art").at("version").get<std::string>() + "."; c.fix = "archive";

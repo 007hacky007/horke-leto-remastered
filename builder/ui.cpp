@@ -291,7 +291,7 @@ const Stage STAGES[] = {
     {"download", 5, "Stahujeme remaster data", "Kontrolujeme kontrolní součet remasterovaných dat.", "Stahování...", "floppy-16"},
     {"decrypt", 5, "Dešifrování remaster dat", "Klíčem jsou obrázky z tvých herních dat (z tvé zálohy). Bez něj není možné remaster dešifrovat.", "Dešifrování remasterovaných obrázků...", "padlock-16"},
     {"upscale", 61, "Upscaling 3x", "Každý snímek z 640 x 480 na 1920 x 1440. Tato část zabere nejvíc času.", "Upscaling 3x", "magnifier-16"},
-    {"remaster", 13, "Skládáme balíčky", "Spojujeme remaster se upscaled animacemi do Original a Remastered.", "Sestavování balíčků...", "gear-16"},
+    {"remaster", 13, "Skládáme balíčky", "Spojujeme remaster s upscalovanými animacemi do Original a Remastered.", "Sestavování balíčků...", "gear-16"},
     {"app", 4, "Vytváříme hru", "Spouštěč, data, hudba, ikona z tvých herních dat a závěrečná kontrola.", "Vytváření aplikace...", "gear-16"},
 };
 int stage_index(const std::string& key) {
@@ -708,11 +708,11 @@ void page_source() {
     if (tile_option(x + tw + 12, y + 72, tw, 72, "disc-32", "CD mechanika", drives ? (app.use_drive ? "VYBRÁNO" : "Z MECHANIKY") : "ŽÁDNÁ MECHANIKA", app.use_drive, drives)) app.use_drive = true;
 #else
     tile_option(x + tw + 12, y + 72, tw, 72, "disc-32", "CD mechanika", "Jen ve Windows", false, false);
-    text(regular, x, y + 152, "Fyzická CD mechanika je dostupná jen ve Windows. Na macOS použij obraz CD.", NOTE);
+    text(regular, x, y + 152, "Fyzická CD mechanika je dostupná jen ve Windows. Na macOS použij CD image.", NOTE);
 #endif
     float ry = y + 176;
     if (!app.use_drive) {
-        const char* pick = "Vybrat image obraz CD...";
+        const char* pick = "Vybrat CD image...";
         float pw = text_width(regular, pick) + 44;  // folder icon + padding; grows with the text
         if (button(x, ry, pw, 26, std::string("     ") + pick)) choose_image();
         draw(icon("folder-16"), x + 8, ry + 5, 16, 16);
@@ -1558,7 +1558,7 @@ void page_build() {
         text(mono, x + w - text_width(mono, run), sy + 66, run, INK);
     }
     fill(x, sy + 86, w, 1, SHADOW);
-    text(tiny, x, sy + 94, "KOPÍROVÁNÍ HERNÍCH DAT", ACCENT);
+    if (STAGES[s].key == std::string("extract") || STAGES[s].key == std::string("app")) text(tiny, x, sy + 94, "KOPÍROVÁNÍ HERNÍCH DAT", ACCENT);
     cd_player(W - 22 - 470, sy + 112, 470, 72);
     if (app.failed) {
         if (button(20, H - 44, 72, 32, "Zpět")) app.page = 0;

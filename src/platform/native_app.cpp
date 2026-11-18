@@ -28,7 +28,9 @@ std::vector<RenderSurface> options_surfaces(const std::vector<OptionRow>& rows,c
  rectangle(56,96,-200,528,304,{20,24,32,245});
  for(const auto& row:rows){
   if(row.selected)rectangle(row.x,row.y,-201,row.width,24,{55,66,80,255});
-  std::vector<uint8_t> bytes(row.label.begin(),row.label.end());auto mask=render_font(font,bytes);if(!mask.has_value())continue;
+  // Panel labels are UTF-8 Czech; the game font has its own (Kamenicky) code page.
+  std::u32string wide;for(size_t i=0;i<row.label.size();){unsigned char c=row.label[i];char32_t cp=c;int n=c<0x80?1:c<0xE0?2:c<0xF0?3:4;if(n>1){cp=c&(0x7F>>n);for(int k=1;k<n&&i+k<row.label.size();++k)cp=(cp<<6)|(row.label[i+k]&0x3F);}wide+=cp;i+=n;}
+  auto encoded=ui_text(font,wide);std::vector<uint8_t> bytes(encoded.begin(),encoded.end());auto mask=render_font(font,bytes);if(!mask.has_value())continue;
   std::array<uint8_t,3> color=row.enabled?std::array<uint8_t,3>{240,235,210}:std::array<uint8_t,3>{100,104,112};
   RenderSurface text{row.x+4,row.y+4,-202,int(bytes.size())*8,16,{}};
   for(auto bit:mask.value())for(auto v:{color[0],color[1],color[2],packed?uint8_t(0):bit})text.rgba.push_back(v);
