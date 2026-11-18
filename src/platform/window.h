@@ -12,6 +12,11 @@ inline bool fullscreen_shortcut(const SDL_Event& event){
 #endif
  return false;
 }
+inline bool help_shortcut(const SDL_Event& event,bool editing){
+ if(editing||event.type!=SDL_EVENT_KEY_DOWN||event.key.repeat||(event.key.mod&(SDL_KMOD_CTRL|SDL_KMOD_ALT|SDL_KMOD_GUI)))return false;
+ return event.key.key==SDLK_H||event.key.key==SDLK_QUESTION||
+  (event.key.scancode!=SDL_SCANCODE_UNKNOWN&&SDL_GetKeyFromScancode(event.key.scancode,event.key.mod,false)==SDLK_QUESTION)||(event.key.key==SDLK_SLASH&&(event.key.mod&SDL_KMOD_SHIFT));
+}
 inline bool options_shortcut(const SDL_Event& event,bool editing){
  if(event.type!=SDL_EVENT_KEY_DOWN||event.key.repeat)return false;
  if(event.key.key==SDLK_F10)return true;

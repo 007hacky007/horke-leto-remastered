@@ -6,6 +6,7 @@
 #include "session.h"
 #include "taskbar.h"
 #include "update.h"
+#include "player.h"
 #include <string>
 extern std::string replaced_version;  // main.cpp
 #include <ctime>
@@ -71,7 +72,7 @@ struct Font {
         std::vector<uint8_t> bitmap(side * side);
         stbtt_pack_context pack;
         stbtt_PackBegin(&pack, bitmap.data(), side, side, 0, 1, nullptr);
-        std::vector<std::pair<int, int>> ranges{{32, 95}, {160, 223}, {0x2026, 1}, {0x2192, 1}, {0x2212, 1}, {0x25BA, 1}, {0x2713, 1}, {0x25BC, 1}};
+        std::vector<std::pair<int, int>> ranges{{32, 95}, {160, 223}, {0x2026, 1}, {0x2192, 1}, {0x2212, 1}, {0x25A0, 1}, {0x25BA, 1}, {0x2713, 1}, {0x25BC, 1}};
         for (auto [first, count] : ranges) {
             std::vector<stbtt_packedchar> chars(count);
             stbtt_PackFontRange(&pack, data->data, 0, px * scale, first, count, chars.data());
@@ -354,6 +355,12 @@ struct App {
     std::string game_status, game_error;
     Uint64 game_at = 0;
     std::thread game_worker;
+    // CD player on the build screen.
+    CdPlayer player;
+    Uint64 volume_shown = 0, player_checked = 0;
+    std::array<float, 5> peaks{};
+    std::array<Uint64, 5> peak_at{};
+    double cd_angle = 0;
 } app;
 
 
@@ -1417,6 +1424,116 @@ void remember_session(bool force) {
     save_session(app.session);
 }
 
+// --- CD player: an old hi-fi deck with a monochrome LCD ---------------------------------------------
+const SDL_Color LCD_BG{154, 167, 132, 255}, LCD_INK{27, 36, 20, 255}, LCD_GHOST{137, 149, 117, 255};
+
+void seg7(float x, float y, float w, float h, float t, char ch) {
+    static const std::map<char, const char*> lit{{'0', "abcdef"}, {'1', "bc"}, {'2', "abged"}, {'3', "abgcd"}, {'4', "fgbc"},
+        {'5', "afgcd"}, {'6', "afgedc"}, {'7', "abc"}, {'8', "abcdefg"}, {'9', "abcdfg"}, {'-', "g"}};
+    auto it = lit.find(ch);
+    std::string on = it == lit.end() ? "" : it->second;
+    float g = std::max(1.0f, t * 0.35f), half = h / 2;
+    const std::pair<char, SDL_FRect> segs[] = {
+        {'a', {x + t, y, w - 2 * t, t}}, {'d', {x + t, y + h - t, w - 2 * t, t}}, {'g', {x + t, y + half - t / 2, w - 2 * t, t}},
+        {'f', {x, y + t + g, t, half - 1.5f * t - 2 * g}}, {'e', {x, y + half + t / 2 + g, t, half - 1.5f * t - 2 * g}},
+        {'b', {x + w - t, y + t + g, t, half - 1.5f * t - 2 * g}}, {'c', {x + w - t, y + half + t / 2 + g, t, half - 1.5f * t - 2 * g}}};
+    for (auto& [k, r] : segs) fill(r.x, r.y, r.w, r.h, on.find(k) != std::string::npos ? LCD_INK : LCD_GHOST);
+}
+
+void seg7_text(float x, float y, float w, float h, float t, const std::string& str) {
+    for (char c : str) {
+        if (c == ':') { fill(x, y + h * 0.28f, t, t, LCD_INK); fill(x, y + h * 0.64f, t, t, LCD_INK); x += t + 3; continue; }
+        seg7(x, y, w, h, t, c);
+        x += w + 3;
+    }
+}
+
+void wedge(float cx, float cy, float r0, float r1, float a0, float a1, SDL_Color c) {
+    SDL_FColor fc{c.r / 255.f, c.g / 255.f, c.b / 255.f, 1};
+    SDL_Vertex v[4];
+    float as[2] = {a0, a1};
+    for (int i = 0; i < 2; ++i) {
+        v[i * 2] = {{cx + r0 * std::cos(as[i]), cy + r0 * std::sin(as[i])}, fc, {0, 0}};
+        v[i * 2 + 1] = {{cx + r1 * std::cos(as[i]), cy + r1 * std::sin(as[i])}, fc, {0, 0}};
+    }
+    const int idx[6] = {0, 1, 3, 0, 3, 2};
+    SDL_RenderGeometry(R, nullptr, v, 4, idx, 6);
+}
+
+void ring(float cx, float cy, float r, float th, SDL_Color c) {
+    for (int i = 0; i < 48; ++i) wedge(cx, cy, r - th, r, i * 6.2832f / 48, (i + 1) * 6.2832f / 48 + 0.01f, c);
+}
+
+void cd_player(float x, float y, float w, float h) {
+    auto& p = app.player;
+    if (SDL_GetTicks() - app.player_checked > 2000) { app.player_checked = SDL_GetTicks(); p.set_folder(app.work / "data" / "audio"); }
+    fill(x, y, w, h, FACE);
+    bevel(x, y, w, h, false);
+    float lx = x + 6, ly = y + 6, lw = 320, lh = h - 12;
+    fill(lx, ly, lw, lh, LCD_BG);
+    bevel(lx, ly, lw, lh, true);
+    // Spinning LCD disc: rim, hub and eight segments, three of them dark.
+    float r = lh * 0.4f, ccx = lx + 8 + r, ccy = ly + lh / 2;
+    if (p.playing()) app.cd_angle += 0.09;
+    ring(ccx, ccy, r, 2, LCD_INK);
+    ring(ccx, ccy, r * 0.24f, 2, LCD_INK);
+    for (int i = 0; i < 8; ++i) {
+        float a = float(i * 0.7854 + app.cd_angle);
+        wedge(ccx, ccy, r * 0.38f, r * 0.82f, a, a + 0.5f, i % 3 == 0 ? LCD_INK : LCD_GHOST);
+    }
+    float tx = ccx + r + 12, ty = ly + 6;
+    bool disc = p.has_disc();
+    bool showing_volume = SDL_GetTicks() < app.volume_shown;
+    if (!disc) {
+        text(bold, tx, ty + 6, "NO DISC", LCD_INK);
+        text(tiny, tx, ty + 26, "hudba bude po načtení CD", LCD_INK);
+    } else if (showing_volume) {
+        text(bold, tx, ty, "VOL", LCD_INK);
+        char v[8];
+        std::snprintf(v, sizeof v, "%02d", p.volume());
+        seg7_text(tx + 34, ty, 13, 24, 3, v);
+        for (int i = 0; i < 20; ++i) fill(tx + i * 6, ty + 32, 4, 5, i < p.volume() ? LCD_INK : LCD_GHOST);
+    } else {
+        text(tiny, tx, ty, p.playing() ? "\u25BA PLAY" : "\u25A0 STOP", LCD_INK);
+        char t[8];
+        int sec = int(p.seconds());
+        if (p.playing()) std::snprintf(t, sizeof t, "%02d:%02d", sec / 60, sec % 60);
+        else std::snprintf(t, sizeof t, "--:--");
+        seg7_text(tx, ty + 12, 13, 24, 3, t);
+        text(tiny, tx + 90, ty, "TRACK", LCD_INK);
+        char n[4];
+        std::snprintf(n, sizeof n, "%02d", p.track());
+        seg7_text(tx + 90, ty + 12, 13, 24, 3, n);
+    }
+    // Five-band analyzer from short horizontal dashes, with a held peak above each band.
+    if (disc && !showing_volume) {
+        auto lv = p.levels();
+        float sx = lx + lw - 92, sy = ly + 5;
+        const int rows = 8;
+        for (int b = 0; b < 5; ++b) {
+            int on = int(lv[b] * rows + 0.5f);
+            if (lv[b] >= app.peaks[b] || SDL_GetTicks() - app.peak_at[b] > 700) { app.peaks[b] = lv[b]; app.peak_at[b] = SDL_GetTicks(); }
+            int peak = int(app.peaks[b] * rows + 0.5f);
+            for (int row = 0; row < rows; ++row) {
+                bool lit = row < on || (row == peak && peak > 0 && p.playing());
+                fill(sx + b * 18, sy + (rows - 1 - row) * 5, 14, 3, lit && p.playing() ? LCD_INK : LCD_GHOST);
+            }
+        }
+        text(tiny, sx - 2, sy + rows * 5 + 1, "60 250 1k 4k 12k", LCD_INK);
+    }
+    // Controls.
+    float bx = lx + lw + 10;
+    text(tiny, bx, y + 10, "HUDBA Z TVÉHO CD", INK);
+    float by = y + 28;
+    static bool autoplay = SDL_getenv("HB_TEST_PLAY") != nullptr;  // dev hook (with SDL_AUDIO_DRIVER=dummy)
+    if (button(bx, by, 30, 24, "\u25BA", disc) || (autoplay && disc)) { p.play(); autoplay = false; }
+    if (button(bx + 34, by, 30, 24, "\u25A0", disc)) p.stop();
+    if (button(bx + 68, by, 30, 24, "\u2212", disc)) { p.volume(-1); app.volume_shown = SDL_GetTicks() + 2000; }
+    if (button(bx + 102, by, 30, 24, "+", disc)) { p.volume(+1); app.volume_shown = SDL_GetTicks() + 2000; }
+    static bool show_volume = SDL_getenv("HB_TEST_VOLUME") != nullptr;
+    if (show_volume && disc) { p.volume(+1); app.volume_shown = SDL_GetTicks() + 2000; show_volume = false; }
+}
+
 void page_build() {
     int s = std::max(0, app.stage);
     float x = 22, w = W - 44, y = CY + 12;
@@ -1446,6 +1563,7 @@ void page_build() {
     fill(x, sy + 86, w, 1, SHADOW);
     text(tiny, x, sy + 94, "OBRÁZKY Z TVOJÍ HRY", ACCENT);
     text(small, x + 130, sy + 92, "Za běhu: FLC, vytvořená zvětšení, dešifrované překresby. Do průvodce se nepřibalují.", NOTE);
+    cd_player(W - 22 - 470, sy + 112, 470, 72);
     if (app.failed) {
         if (button(20, H - 44, 72, 32, "Zpět")) app.page = 0;
         text(regular, 104, H - 34, "Hotová část zůstává uložená, další pokus naváže.", NOTE);
@@ -1655,6 +1773,7 @@ int run_window(int, char**) {
             if (app.page == 0 || app.page == 3) update_toast();
         }
         if (app.quit) running = false;
+        if (app.page != 2 && app.player.playing()) app.player.shutdown();  // the player lives only on the build screen
         const char* shot = SDL_getenv("HB_SCREENSHOT");
         const char* wait = SDL_getenv("HB_SCREENSHOT_MS");
         bool settled = !app.checking && SDL_GetTicks() - opened > Uint64(wait ? std::atoi(wait) : 1500);
@@ -1665,6 +1784,7 @@ int run_window(int, char**) {
         SDL_RenderPresent(R);
     }
     if (app.worker.joinable()) app.worker.detach();
+    app.player.shutdown();
     if (app.update_worker.joinable()) app.update_worker.detach();
     if (app.game_worker.joinable()) app.game_worker.join();  // never leave a half-swapped game behind
     SDL_Quit();

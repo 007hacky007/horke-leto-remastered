@@ -1,10 +1,10 @@
 #pragma once
 #include "render/graphics_mode.h"
 namespace hl {
-enum class OptionAction {None,Graphics,Fullscreen,Size,Scaling,Hints,Close};
+enum class OptionAction {None,Graphics,Fullscreen,Size,Scaling,Hints,Close,Help};
 struct OptionRow {
  std::string label;int x{},y{},width{};OptionAction action{OptionAction::None};
- bool enabled{true},selected{};WindowSize size{};ScalingMode scaling{};
+ bool enabled{true},selected{};WindowSize size{};ScalingMode scaling{};int height{24};
 };
 inline std::vector<OptionRow> options_rows(const GraphicsSettings& s,WindowSize usable){
  std::vector<OptionRow> rows{
@@ -33,7 +33,7 @@ inline std::vector<OptionRow> options_rows(const GraphicsSettings& s,WindowSize 
  return rows;
 }
 inline std::optional<OptionRow> option_at(const std::vector<OptionRow>& rows,LogicalPoint p){
- for(const auto& row:rows)if(row.enabled&&row.action!=OptionAction::None&&p.x>=row.x&&p.x<row.x+row.width&&p.y>=row.y&&p.y<row.y+24)return row;
+ for(const auto& row:rows)if(row.enabled&&row.action!=OptionAction::None&&p.x>=row.x&&p.x<row.x+row.width&&p.y>=row.y&&p.y<row.y+row.height)return row;
  return {};
 }
 }

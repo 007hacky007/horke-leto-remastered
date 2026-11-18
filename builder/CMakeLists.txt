@@ -32,7 +32,8 @@ set(HB_FONTS ${HB_ROOT}/tools/vendor/dejavu-fonts/ttf/DejaVuSans.ttf ${HB_ROOT}/
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp
   COMMAND ${CMAKE_COMMAND} "-DFILES=${HB_ASSETS};${HB_FONTS}" -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake
   DEPENDS ${HB_ASSETS} ${HB_FONTS} ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake VERBATIM)
-add_executable(horke-leto-builder WIN32 MACOSX_BUNDLE main.cpp ui.cpp preflight.cpp session.cpp ${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp)
+add_executable(horke-leto-builder WIN32 MACOSX_BUNDLE main.cpp ui.cpp preflight.cpp session.cpp player.cpp drflac.cpp ${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp)
+target_include_directories(horke-leto-builder PRIVATE ${HB_ROOT}/tools/vendor/dr_libs)
 if(APPLE)
   target_sources(horke-leto-builder PRIVATE taskbar_mac.mm)
   set_source_files_properties(taskbar_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")

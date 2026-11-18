@@ -3,6 +3,7 @@
 #include "debug/replay.h"
 #include "platform/runtime_mouse.h"
 #include "platform/window.h"
+#include "platform/player_ui.h"
 #include "render/gpu.h"
 #include "render/renderer_policy.h"
 #include "data/hash.h"
@@ -53,7 +54,7 @@ int run_native_app(const AppOptions& options) {
  auto runtime=options.load_save.empty()?IntroRuntime::open(std::filesystem::u8path(options.data_path)):IntroRuntime::restore(std::filesystem::u8path(options.data_path),std::filesystem::u8path(options.load_save));
  if(!runtime.has_value()){std::cerr<<runtime.error().reason<<'\n';SDL_DestroyAudioStream(stream);renderer.value().reset();SDL_DestroyWindow(window);SDL_Quit();return 1;}
  auto& game=*runtime.value();game.set_save_directory(pref_path);Result<void> setup;
- GraphicsControl graphics(settings);bool menu_open=false,settings_dirty=true;
+ GraphicsControl graphics(settings);HelpCard help;bool menu_open=false,settings_dirty=true;
  std::optional<Pack> original,remastered;
  if(setup.has_value()&&!settings.developer_nearest){auto catalog=source_catalog(std::filesystem::u8path(options.data_path));if(!catalog.has_value())setup=catalog.error();else {
   auto raw=read_file(std::filesystem::u8path(options.data_path)/"HL.EXE");if(!raw.has_value()||raw.value().size()<252284+4096)setup=DataError{"","font",0,"missing original font source"};
@@ -71,6 +72,8 @@ int run_native_app(const AppOptions& options) {
   if(original&&graphics.mode()!=graphics.requested_mode()){FrameResolver resolver(*original,remastered?&*remastered:nullptr);auto loaded=renderer.value()->ready(surfaces.value(),resolver,graphics.requested_mode(),palette_hash);if(!loaded.has_value())return loaded.error();ready=loaded.value();}
   bool changed=graphics.frame_boundary(ready);if(changed||settings_dirty){auto saved=save_graphics_settings(settings_file,graphics.settings());if(!saved.has_value())return saved;settings_dirty=false;}
   auto markers=graphics.hints_visible()?hint_surfaces(game.active_areas(),true):std::vector<RenderSurface>{};for(auto& marker:markers)surfaces.value().push_back(std::move(marker));if(menu_open){auto usable=usable_window_size(window);if(!usable.has_value())return usable.error();auto panel=options_surfaces(options_rows(graphics.settings(),usable.value()),font.value(),bool(original));for(auto& surface:panel)surfaces.value().push_back(std::move(surface));}
+  if(game.scene()=="14rf"&&!menu_open){auto usable=usable_window_size(window);if(!usable.has_value())return usable.error();auto rows=game_settings_rows(graphics.settings(),usable.value(),font.value());for(auto& surface:game_settings_surfaces(rows,font.value()))surfaces.value().push_back(std::move(surface));}
+  for(auto& surface:help_surfaces(font.value(),help.alpha(SDL_GetTicks()),graphics.settings()))surfaces.value().push_back(std::move(surface));
   if(!original)return renderer.value()->present(std::move(surfaces.value()));
   auto effect=palette_postprocess(palette);if(!effect.has_value())return effect.error();FrameResolver resolver(*original,remastered?&*remastered:nullptr);return renderer.value()->present(std::move(surfaces.value()),resolver,graphics.mode(),palette_hash,effect.value());
  };
@@ -90,8 +93,10 @@ int run_native_app(const AppOptions& options) {
  StartupRenderBudget startup_budget;
  nlohmann::json runtime_frames=nlohmann::json::array();uint64_t max_update_backlog=0;auto prior_frame=std::chrono::steady_clock::now();
  auto input_event=[&](const SDL_Event& event)->Result<void>{
+  if(event.type==SDL_EVENT_MOUSE_BUTTON_DOWN)help.dismiss();
+  bool show_help=help_shortcut(event,game.editing_save_name());if(show_help)help.show(SDL_GetTicks());
   auto changed_window=window_event(window,graphics,event);if(!changed_window.has_value())return changed_window.error();if(changed_window.value()){settings_dirty=true;return {};}
-  if(graphics_event(graphics,event,game.editing_save_name()))return {};
+  if(graphics_event(graphics,event,game.editing_save_name())||show_help)return {};
   if(options_shortcut(event,game.editing_save_name())){menu_open=!menu_open;if(!(menu_open?SDL_ShowCursor():SDL_HideCursor()))return DataError{"","options cursor",0,SDL_GetError()};return {};}
   if(menu_open&&event.type==SDL_EVENT_KEY_DOWN&&event.key.key==SDLK_ESCAPE){menu_open=false;if(!SDL_HideCursor())return DataError{"","options cursor",0,SDL_GetError()};return {};}
   if(menu_open){
@@ -105,6 +110,13 @@ int run_native_app(const AppOptions& options) {
    }
    return {};
   }
+  if(game.scene()=="14rf"&&event.type==SDL_EVENT_MOUSE_BUTTON_DOWN&&event.button.button==SDL_BUTTON_LEFT){
+   int w,h,pw,ph;if(!SDL_GetWindowSize(window,&w,&h)||!SDL_GetRenderOutputSize(renderer.value()->sdl(),&pw,&ph))return DataError{"","settings pointer",0,SDL_GetError()};
+   auto point=Viewport::window_to_logical({event.button.x,event.button.y},{w,h,pw,ph},graphics.settings().scaling);
+   auto usable=usable_window_size(window);if(!usable.has_value())return usable.error();
+   auto row=point?option_at(game_settings_rows(graphics.settings(),usable.value(),font.value()),*point):std::nullopt;
+   if(row){if(row->action==OptionAction::Help)help.show(SDL_GetTicks());else {auto applied=apply_option(window,graphics,*row);if(!applied.has_value())return applied;settings_dirty=true;}return {};}
+  }
   if(event.type==SDL_EVENT_TEXT_INPUT)return game.text_input(event.text.text);
   if(event.type==SDL_EVENT_KEY_DOWN&&game.editing_save_name()){if(event.key.key==SDLK_RETURN)return game.edit_key("enter");if(event.key.key==SDLK_BACKSPACE)return game.edit_key("backspace");if(event.key.key==SDLK_ESCAPE)return game.edit_key("escape");return {};}
   if(event.type==SDL_EVENT_KEY_DOWN){if(event.key.key==SDLK_ESCAPE){if(!event.key.repeat)return game.escape();return {};}
@@ -116,6 +128,7 @@ int run_native_app(const AppOptions& options) {
   return {};
  };
  uint64_t start=SDL_GetTicks(),updates=0,last_capture=UINT64_MAX,submitted_frames=0;bool quit=false;
+ help.launch(graphics,start);
  std::ofstream audio_file;if(!output.empty())audio_file.open(output/"queued-audio.f32",std::ios::binary);
  while(result.has_value()&&!quit&&!game.quit_requested()) {
   auto frame_begin=std::chrono::steady_clock::now();auto updates_before=updates;
@@ -135,7 +148,7 @@ int run_native_app(const AppOptions& options) {
    uint64_t event_ms=updates*1000/35;
    if(replay)for(const auto& e:replay->events_at(event_ms)) {
     SDL_Event input{};
-    if(e.kind=="key_down"||e.kind=="key_up"){input.type=e.kind=="key_down"?SDL_EVENT_KEY_DOWN:SDL_EVENT_KEY_UP;input.key.key=SDL_GetKeyFromName(e.key.c_str());}
+    if(e.kind=="key_down"||e.kind=="key_up"){input.type=e.kind=="key_down"?SDL_EVENT_KEY_DOWN:SDL_EVENT_KEY_UP;input.key.key=e.key=="?"?SDLK_QUESTION:SDL_GetKeyFromName(e.key.c_str());}
     else if(e.kind=="text_input"){input.type=SDL_EVENT_TEXT_INPUT;input.text.text=e.text.c_str();}
     else {int w,h,pw,ph;SDL_GetWindowSize(window,&w,&h);SDL_GetRenderOutputSize(renderer.value()->sdl(),&pw,&ph);auto v=Viewport::fit(pw,ph,graphics.settings().scaling);float x=float((v.x+(e.logical_x+0.5)*v.width/640)*w/pw),y=float((v.y+(e.logical_y+0.5)*v.height/480)*h/ph);
      if(e.kind=="mouse_move"){input.type=SDL_EVENT_MOUSE_MOTION;input.motion.x=x;input.motion.y=y;}
@@ -155,7 +168,7 @@ int run_native_app(const AppOptions& options) {
   auto draw_end=std::chrono::steady_clock::now();
   uint64_t bucket=elapsed/1000;
   if(!output.empty()&&last_capture!=bucket) {
-   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(game.checkpoint()));checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["display_settings"]={{"fullscreen",graphics.settings().fullscreen},{"window_width",graphics.settings().window_width},{"window_height",graphics.settings().window_height},{"scaling",graphics.settings().scaling==ScalingMode::Fill?"fill":graphics.settings().scaling==ScalingMode::Whole?"whole":"stretch"},{"active_area_hints",graphics.settings().hints_enabled}};checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();
+   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(game.checkpoint()));checkpoint["help_visible"]=help.visible(SDL_GetTicks());checkpoint["help_alpha"]=help.alpha(SDL_GetTicks());checkpoint["help_launches"]=graphics.settings().help_launches;checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["display_settings"]={{"fullscreen",graphics.settings().fullscreen},{"window_width",graphics.settings().window_width},{"window_height",graphics.settings().window_height},{"scaling",graphics.settings().scaling==ScalingMode::Fill?"fill":graphics.settings().scaling==ScalingMode::Whole?"whole":"stretch"},{"active_area_hints",graphics.settings().hints_enabled}};checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();
    auto path=output/("tick-"+std::to_string(bucket*1000));auto captured=renderer.value()->readback();
    if(!captured.has_value()){result=captured.error();break;}
    auto model=game.rgba();if(!model.has_value()){result=model.error();break;}
