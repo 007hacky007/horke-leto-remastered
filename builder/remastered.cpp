@@ -282,6 +282,7 @@ static bool palette_invisible(const fs::path& base, const fs::path& variant) {
     auto a = read_json(base / "index.json"), b = read_json(variant / "index.json");
     if (a.at("frames").size() != b.at("frames").size()) return false;
     std::map<std::string, Image> pages;
+    size_t compared = 0;
     auto page = [&](const fs::path& dir, const std::string& leaf) -> Image& {
         auto key = (dir / leaf).string();
         if (!pages.count(key)) pages[key] = load_png(dir / leaf, 4);
@@ -289,22 +290,26 @@ static bool palette_invisible(const fs::path& base, const fs::path& variant) {
     };
     for (size_t i = 0; i < a.at("frames").size(); ++i)
         for (auto& [usage, x] : a.at("frames")[i].at("usages").items()) {
-            if (!b.at("frames")[i].at("usages").contains(usage)) return false;
+            if (!b.at("frames")[i].at("usages").contains(usage)) continue;  // only usages the variant was built for
+            ++compared;
             auto& y = b.at("frames")[i].at("usages").at(usage);
             if (x.value("pixel_sha256", "") == y.value("pixel_sha256", "")) continue;
             auto& r = x.at("rect");
             auto& s = y.at("rect");
             if (r[2] != s[2] || r[3] != s[3]) return false;
             auto p = crop(page(base, x.at("atlas")), r[0], r[1], r[2], r[3]), q = crop(page(variant, y.at("atlas")), s[0], s[1], s[2], s[3]);
-            double sum = 0; size_t off = 0, n = p.px.size() / 4;
+            double sum = 0; size_t off = 0, n = p.px.size() / 4;  // n drops for skipped pixels
             for (size_t k = 0; k < p.px.size(); k += 4) {
+                // Transparent pixels keep arbitrary extended RGB; only what is drawn counts.
+                if (!p.px[k + 3] && !q.px[k + 3]) { --n; continue; }
+                if (std::abs(int(p.px[k + 3]) - int(q.px[k + 3])) > 128) { ++off; continue; }
                 int worst = 0;
                 for (int c = 0; c < 3; ++c) { int d = std::abs(int(p.px[k + c]) - int(q.px[k + c])); sum += d; worst = std::max(worst, d); }
                 if (worst > 24) ++off;
             }
             if (n && (sum / (3.0 * n) >= 1.0 || off * 200 > n)) return false;
         }
-    return true;
+    return compared > 0;
 }
 
 // Remastered variants from the packs alone (also used when updating an installed game):
@@ -340,7 +345,7 @@ void build_remastered_variants(const RemasteredPaths& paths, const json& specs) 
             index["mode"] = "Remastered";
             index["grade_rgb_gain"] = gain;
             write_json(target / "index.json", index);
-        } else if (base_index.at("frame_count").get<int>() <= 1) {
+        } else if (!base_index.contains("grade_rgb_gain")) {  // a redraw, static or animated
             if (!palette_invisible(paths.original / "flc" / name, source)) continue;
             remove_tree(target);
             fs::create_directories(target);
