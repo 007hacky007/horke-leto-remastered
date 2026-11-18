@@ -50,3 +50,20 @@ TEST_CASE("startup chooses the largest integer scale in usable display coordinat
  CHECK(choose_window_size(800,600,s)==WindowSize{800,600});
 }
 }
+TEST_SUITE("render.graphics_mode") {
+TEST_CASE("scaling modes round trip legacy settings default to fill and invalid modes fail") {
+ auto file=std::filesystem::temp_directory_path()/"hl-scaling-settings.json";
+ for(auto mode:{ScalingMode::Fill,ScalingMode::Whole,ScalingMode::Stretch}){
+  GraphicsSettings s;s.scaling=mode;REQUIRE(save_graphics_settings(file,s).has_value());auto r=load_graphics_settings(file);REQUIRE(r.has_value());CHECK(r.value().scaling==mode);
+ }
+ {std::ofstream out(file);out<<R"({"schema_version":1,"graphics":"Original"})";}
+ auto old=load_graphics_settings(file);REQUIRE(old.has_value());CHECK(old.value().scaling==ScalingMode::Fill);
+ {std::ofstream out(file);out<<R"({"schema_version":1,"graphics":"Original","scaling":"bogus"})";}
+ CHECK_FALSE(load_graphics_settings(file).has_value());std::filesystem::remove(file);
+}
+TEST_CASE("window presets exclude every size exceeding usable display bounds") {
+ CHECK(window_size_presets(1512,900)==std::vector<WindowSize>{{640,480},{960,720}});
+ CHECK(window_size_presets(1920,1440)==std::vector<WindowSize>{{640,480},{960,720},{1280,960},{1600,1200},{1920,1440}});
+ CHECK(window_size_presets(639,480).empty());CHECK(window_size_presets(640,479).empty());
+}
+}

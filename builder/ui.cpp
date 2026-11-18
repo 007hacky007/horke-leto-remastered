@@ -857,21 +857,37 @@ void game_update_dialog() {
     fill(x + 4, y + 4, w, h, SDL_Color{0, 0, 0, 90});
     fill(x, y, w, h, FACE);
     bevel(x, y, w, h, false);
-    title_bar(x + 3, y + 3, w - 6, 22, "Aktualizace hry", icon("gear-16"));
-    float cx = x + 24, cy = y + 44;
-    bool done = app.game == App::GameUpdate::Done;
-    if (done) draw(icon("check-32"), cx + 8, cy + 8, 48, 48);
-    else draw(icon("gear-32"), cx + 8, cy + 8, 48, 48, app.game == App::GameUpdate::Running ? t * 180 : 0);
-    float tx = cx + 84, tw = w - (tx - x) - 20;
+    title_bar(x + 3, y + 3, w - 6, 22, "Aktualizace hry", icon("disc-16"));
+    float cx = x + 20, cy = y + 40;
+    bool done = app.game == App::GameUpdate::Done, running = app.game == App::GameUpdate::Running;
+    // The burned CD spins; ones and zeroes stream out of it to the right (fast while the engine is swapped).
+    const float cd = 64, ccx = cx + cd / 2, ccy = cy + 10 + cd / 2;
+    double speed = running ? 1.0 : done ? 0.0 : 0.25;
+    if (speed > 0) {
+        const int streams = 14;
+        for (int k = 0; k < streams; ++k) {
+            double flight = t * (0.55 + 0.6 * speed) + k * 0.61803, p = flight - std::floor(flight);
+            float dx = ccx + 18 + float(p) * 130, dy = ccy - 18 + float((k * 37) % 36) + float(std::sin(p * 6 + k) * 3);
+            Uint8 alpha = Uint8(255 * (1 - p) * (running ? 1.0 : 0.6));
+            uint32_t h = uint32_t(k + 1) * 2654435761u ^ uint32_t(std::floor(flight)) * 40503u;  // new digit every flight
+            const char* bit = (h >> 13) & 1 ? "1" : "0";
+            SDL_Color c = (k % 3) ? SDL_Color{0, 0, 128, alpha} : SDL_Color{0, 128, 0, alpha};
+            text(p < 0.5 ? mono : tiny, dx, dy, bit, c);
+        }
+    }
+    if (done) draw(icon("check-32"), cx + 8, cy + 18, 48, 48);
+    else draw(icon("cdr-128"), cx, cy + 10, cd, cd, std::fmod(t * 360 * (running ? 1.5 : 0.15), 360.0));
+    float tx = cx + 200, tw = w - (tx - x) - 20;
     std::string built = app.game_info.builder_version.empty() ? "1.0.0" : app.game_info.builder_version;
     switch (app.game) {
     case App::GameUpdate::Offer:
         text(bold, tx, cy, "Tvoje hra má starší engine.", INK);
-        text(regular, tx, cy + 22, "Vyměníme jen engine. Obrázky, hudba i uložené pozice", NOTE);
+        text(regular, tx, cy + 22, "Vyměníme jen engine. Obrázky, hudba", NOTE);
+        text(regular, tx, cy + 40, "i uložené pozice zůstanou.", NOTE);
 #ifdef _WIN32
-        text(regular, tx, cy + 40, "zůstanou, takže to zabere jen pár vteřin.", NOTE);
+        text(regular, tx, cy + 58, "Zabere to jen pár vteřin.", NOTE);
 #else
-        text(regular, tx, cy + 40, "zůstanou. Zabere to minutu nebo dvě (macOS hru znovu podepíše).", NOTE);
+        text(regular, tx, cy + 58, "Zabere to minutu nebo dvě.", NOTE);
 #endif
         break;
     case App::GameUpdate::Running:
@@ -881,7 +897,8 @@ void game_update_dialog() {
         break;
     case App::GameUpdate::Done:
         text(bold, tx, cy, "Hotovo. Hra má nejnovější engine.", INK);
-        text(regular, tx, cy + 22, "Teď už to můžeš pokazit jen hraním. Zase.", NOTE);
+        text(regular, tx, cy + 22, "Teď už to můžeš pokazit jen hraním.", NOTE);
+        text(regular, tx, cy + 40, "Zase.", NOTE);
         break;
     default:
         text(bold, tx, cy, "Aktualizace se nepovedla.", FAILC);
@@ -891,10 +908,10 @@ void game_update_dialog() {
     }
     const std::pair<const char*, std::string> rows[] = {{"Hra", app.game_info.app.string()},
         {"Engine", std::string("z průvodce ") + built + "  >  " + builder_version()}};
-    float ry = cy + 92;
+    float ry = cy + 104, rx = cx;
     for (auto& [label, value] : rows) {
-        text(tiny, tx, ry + 2, label, NOTE);
-        text(mono, tx + 60, ry, elide(mono, value, tw - 60), INK);
+        text(tiny, rx, ry + 2, label, NOTE);
+        text(mono, rx + 60, ry, elide(mono, value, w - 40 - 60), INK);
         ry += 20;
     }
     float by = y + h - 44;
@@ -1535,6 +1552,12 @@ int run_window(int, char**) {
     if (!app.replaced.empty()) app.update_at = SDL_GetTicks();
     start_update_check();
     find_outdated_games();
+    if (const char* test = SDL_getenv("HB_TEST_GAME_DIALOG")) {  // dev hook: "offer" or "running" over a fake game
+        app.game_info = GameInfo{fs::u8path("/Users/hrac/Hry/Horke Leto/Horke Leto.app"), "", true};
+        app.game = std::string(test) == "running" ? App::GameUpdate::Running : App::GameUpdate::Offer;
+        app.game_status = "Ponechávám packs";
+        app.game_at = SDL_GetTicks();
+    }
     if (const char* home = SDL_GetUserFolder(SDL_FOLDER_HOME)) app.output = (fs::u8path(home) / "Games" / "Horke Leto").string();
     // Developer/README screenshots: HB_DEMO="page stage" with HB_DEMO_WORK pointing at a .builder folder.
     if (const char* demo = SDL_getenv("HB_DEMO")) {

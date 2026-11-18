@@ -4,7 +4,7 @@
 #include "render/scene_graph.h"
 using namespace hl;
 TEST_SUITE("render.3x") {
-TEST_CASE("fit uses integer canvas scale when possible and fractional downscale below native") {auto v=Viewport::fit(4000,3000);CHECK(v.x==80);CHECK(v.y==60);CHECK(v.width==3840);CHECK(v.height==2880);auto small=Viewport::fit(1280,800);CHECK(small.width==doctest::Approx(1066.666667));CHECK(small.height==800);CHECK(small.fractional);auto p=Viewport::window_to_logical({80,60},{4000,3000,4000,3000});REQUIRE(p);CHECK(p->x==0);CHECK(p->y==0);CHECK_FALSE(Viewport::window_to_logical({79,60},{4000,3000,4000,3000}));}
+TEST_CASE("fit uses integer canvas scale when possible and fractional downscale below native") {auto v=Viewport::fit(4000,3000,ScalingMode::Whole);CHECK(v.x==80);CHECK(v.y==60);CHECK(v.width==3840);CHECK(v.height==2880);auto small=Viewport::fit(1280,800);CHECK(small.width==doctest::Approx(1066.666667));CHECK(small.height==800);CHECK(small.fractional);auto p=Viewport::window_to_logical({80,60},{4000,3000,4000,3000},ScalingMode::Whole);REQUIRE(p);CHECK(p->x==0);CHECK(p->y==0);CHECK_FALSE(Viewport::window_to_logical({79,60},{4000,3000,4000,3000},ScalingMode::Whole));}
 TEST_CASE("pack placements use logical anchors and explicit projection rather than atlas dimensions") {FrameAsset a;a.x=30;a.y=60;a.width=90;a.height=120;auto r=place_asset(a,5,7);CHECK(r.x==45);CHECK(r.y==81);CHECK(r.width==90);CHECK(r.height==120);auto s=place_asset(a,100,200,0.5,0.5);CHECK(s.x==315);CHECK(s.y==630);CHECK(s.width==45);CHECK(s.height==60);}
 }
 TEST_SUITE("render.palette") {

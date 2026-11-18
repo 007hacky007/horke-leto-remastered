@@ -14,7 +14,8 @@ class IntroRuntime:public EngineServices {
  std::filesystem::path save_directory_;
  std::optional<SaveState> menu_save_;
  std::vector<nlohmann::json> slot_queries_;
- size_t slot_query_cursor_{};bool reconstructing_{};
+ // Unversioned save events retain the released input behavior during replay.
+ size_t slot_query_cursor_{};bool reconstructing_{},legacy_input_{};
 #ifndef NDEBUG
  std::function<void(const nlohmann::json&)> draw_observer_;
 #endif

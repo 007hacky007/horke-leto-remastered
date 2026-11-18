@@ -66,6 +66,8 @@ struct IntroRuntime::State {
  Palette palette{},source_palette{},render_palette{};std::function<Result<void>(unsigned)> palette_presenter;std::map<std::string,std::string> strings;std::map<std::string,int32_t> integers{{"version",1}};uint32_t random_state{1};std::vector<nlohmann::json> trace;
  std::optional<Movement> walk;std::optional<Region> walk_region;Process* arrival_waiter{};unsigned char_frame{};int final_direction{-1};
  std::optional<CharacterDefinition> character;std::string character_id;bool character_visible{};int char_x{},char_y{},char_direction{4},near_z{480},far_z{480};
+ void close_inventory(){inventory_open=false;for(auto& task:tasks)if(task.process&&task.inventory_context)task.process->state=ProcessState::terminated;
+  for(const auto& voice:voices)if(voice.inventory_context)mixer.stop(voice.id);std::erase_if(voices,[](const auto& voice){return voice.inventory_context;});}
  Result<std::string> resource(const Process& p,int32_t index)const {
   if(index<0||size_t(index)>=p.object->layout.resources.size())return DataError{"",p.object->name,p.pc,"resource index outside table"};return p.object->layout.resources[size_t(index)].name;
  }
@@ -180,7 +182,7 @@ Result<std::unique_ptr<IntroRuntime>> IntroRuntime::restore(const std::filesyste
  if(bytes.value().size()>=4&&bytes.value()[0]==std::byte{0x9a}&&bytes.value()[1]==std::byte{2}&&bytes.value()[2]==std::byte{}&&bytes.value()[3]==std::byte{}){auto restored=g.restore_dos(bytes.value());if(!restored.has_value())return restored.error();return runtime;}
  auto state=load_game(path,g.state_->data_identity);if(!state.has_value())return state.error();
  try {const auto& saved=state.value().reconstruction;auto tick=saved.at("tick").get<uint64_t>();const auto& events=saved.at("events");if(tick>1000000||!events.is_array()||events.size()>100000)return DataError{"","save",0,"invalid reconstruction bounds"};g.slot_queries_=saved.value("slot_queries",std::vector<nlohmann::json>{});if(g.slot_queries_.size()>100000)return DataError{"","save",0,"slot query history exceeds bound"};g.reconstructing_=true;g.set_cooperative_fades(saved.value("cooperative_fades",false));Result<void> r;if(saved.contains("dos_base")){auto base=saved.at("dos_base").get<std::vector<uint8_t>>();r=g.restore_dos(std::as_bytes(std::span(base)));}else r=g.start();if(!r.has_value())return r.error();uint64_t previous=0;
-  for(const auto& e:events){auto at=e.at("tick").get<uint64_t>();if(at<previous||at>tick)return DataError{"","save",0,"invalid reconstruction event order"};previous=at;while(g.state_->tick<at){r=g.update();if(!r.has_value())return r.error();}auto kind=e.at("kind").get<std::string>();if(kind=="click")r=g.click(e.at("x").get<int>(),e.at("y").get<int>(),e.at("right").get<bool>());else if(kind=="escape")r=g.escape();else if(kind=="text")r=g.text_input(e.at("text").get<std::string>());else if(kind=="edit_key")r=g.edit_key(e.at("key").get<std::string>());else if(kind=="cooperative_fades"){g.set_cooperative_fades(e.at("enabled").get<bool>());r={};}else if(kind=="pointer")r=g.pointer(e.at("x").get<int>(),e.at("y").get<int>());else return DataError{"","save",0,"unknown reconstruction input"};if(!r.has_value())return r.error();}
+  for(const auto& e:events){auto at=e.at("tick").get<uint64_t>();if(at<previous||at>tick)return DataError{"","save",0,"invalid reconstruction event order"};previous=at;while(g.state_->tick<at){r=g.update();if(!r.has_value())return r.error();}auto kind=e.at("kind").get<std::string>();auto version=e.value("input_version",1);if(version<1||version>2)return DataError{"","save",0,"invalid input semantics version"};g.legacy_input_=version==1;if(kind=="click")r=g.click(e.at("x").get<int>(),e.at("y").get<int>(),e.at("right").get<bool>());else if(kind=="escape")r=g.escape();else if(kind=="text")r=g.text_input(e.at("text").get<std::string>());else if(kind=="edit_key")r=g.edit_key(e.at("key").get<std::string>());else if(kind=="cooperative_fades"){g.set_cooperative_fades(e.at("enabled").get<bool>());r={};}else if(kind=="pointer")r=g.pointer(e.at("x").get<int>(),e.at("y").get<int>());else return DataError{"","save",0,"unknown reconstruction input"};if(!r.has_value())return r.error();g.legacy_input_=false;}
   while(g.state_->tick<tick){r=g.update();if(!r.has_value())return r.error();}
   if(saved.contains("pointer")){r=g.pointer(saved.at("pointer").at(0).get<int>(),saved.at("pointer").at(1).get<int>());if(!r.has_value())return r.error();}
   if(g.slot_query_cursor_!=g.slot_queries_.size())return DataError{"","save",0,"unused slot query history"};g.reconstructing_=false;
@@ -406,12 +408,11 @@ Result<void> IntroRuntime::update() {
 bool IntroRuntime::inventory_open()const{return state_->inventory_open;}
 const std::string& IntroRuntime::selected_item()const{return state_->selected;}
 Result<void> IntroRuntime::click(int x,int y,bool right){
+ if(!legacy_input_&&right&&state_->scene=="14rf")return escape();
  if(can_save()){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
- auto& s=*state_;if(s.name_editor||s.fade)return {};s.inputs.push_back({{"tick",s.tick},{"kind","click"},{"x",x},{"y",y},{"right",right}});s.pointer_x=x;s.pointer_y=y;if(x<0||x>=640||y<0||y>=480)return DataError{"",s.scene,0,"click outside logical canvas"};
+ auto& s=*state_;if(s.name_editor||s.fade)return {};s.inputs.push_back({{"tick",s.tick},{"kind","click"},{"input_version",legacy_input_?1:2},{"x",x},{"y",y},{"right",right}});s.pointer_x=x;s.pointer_y=y;if(x<0||x>=640||y<0||y>=480)return DataError{"",s.scene,0,"click outside logical canvas"};
  if(s.dialogue_waiter){if(s.choices){auto id=choice_at(*s.choices,*s.dialogue,x,y);if(!id)return {};if(s.dialogue_waiter->stack.size()>=100)return DataError{"",s.scene,0,"choice result stack overflow"};s.dialogue_waiter->stack.push_back(*id);s.choices.reset();}else s.mixer.stop(s.dialogue_voice);s.dialogue_waiter->state=ProcessState::ready;s.dialogue_waiter=nullptr;s.dialogue.reset();s.dialogue_text.clear();if(s.speech_loop)s.speech_direction.reset();return {};}
  if(s.user_locks>0)return {};
- auto close_inventory=[&]{s.inventory_open=false;for(auto& task:s.tasks)if(task.process&&task.inventory_context)task.process->state=ProcessState::terminated;
-  for(const auto& voice:s.voices)if(voice.inventory_context)s.mixer.stop(voice.id);std::erase_if(s.voices,[](const auto& voice){return voice.inventory_context;});};
  auto use_selected=[&](State::Object* target)->Result<void>{
   auto selected=s.selected;auto held=s.object(selected);if(!held.has_value())return held.error();State::Object* owner=held.value();std::optional<ScriptHandler> handler;
   if(target){auto h=target->use_handlers.find(selected);auto fallback=target->handlers.find(57);
@@ -421,7 +422,7 @@ Result<void> IntroRuntime::click(int x,int y,bool right){
   }else {auto h=held.value()->handlers.find(56);if(h!=held.value()->handlers.end())handler=h->second;}
   if(handler){auto r=s.spawn(*owner,handler->entry);if(!r.has_value())return r.error();}return settle();
  };
- if(s.inventory_open){auto slot=Inventory::hit(x,y);if(!right||(x<=3&&y<=3)){close_inventory();return {};}
+ if(s.inventory_open){auto slot=Inventory::hit(x,y);if(!right||(x<=3&&y<=3)){s.close_inventory();return {};}
   if(!slot)return {};
   if(*slot==17){auto object=s.object(s.selected.empty()?s.inventory.slots()[17].item:s.selected);if(!object.has_value())return object.error();auto h=object.value()->handlers.find(55);if(h!=object.value()->handlers.end()){auto r=s.spawn(*object.value(),h->second.entry);if(!r.has_value())return r.error();}return {};}
   auto item=s.inventory.slots()[*slot].item;State::Object* target=nullptr;if(!item.empty()){auto object=s.object(item);if(!object.has_value())return object.error();target=object.value();target->inventory_only=true;}
@@ -456,9 +457,11 @@ Result<void> IntroRuntime::edit_key(std::string_view key){auto& s=*state_;if(!s.
 Result<void> IntroRuntime::escape(){
  if(editing_save_name())return edit_key("escape");
  bool gameplay=can_save();if(gameplay){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
- auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","escape"}});auto i=s.strings.find("escape_scr");
- if(i==s.strings.end()||i->second.empty())return {};
- if(!screens_.empty()&&(i->second==s.scene||i->second==screens_.back()->scene))s.return_screen=true;
+ auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","escape"},{"input_version",legacy_input_?1:2}});auto i=s.strings.find("escape_scr");
+ if(!legacy_input_&&s.inventory_open){s.close_inventory();return {};}
+ // Temporary screens return to their caller even before escape_scr is set.
+ if((i==s.strings.end()||i->second.empty())&&(legacy_input_||screens_.empty()))return {};
+ if(!screens_.empty()&&(!legacy_input_||i->second==s.scene||i->second==screens_.back()->scene))s.return_screen=true;
  // The original main menu suspends gameplay even when saving is disallowed.
  else if(i->second!=s.scene){if(gameplay||i->second=="126y")s.pending_overlay=i->second;else s.pending=i->second;}
  return settle();

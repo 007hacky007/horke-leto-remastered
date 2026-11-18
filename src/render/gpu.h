@@ -2,11 +2,13 @@
 #include "render/scene_graph.h"
 #include "render/palette.h"
 #include "render/cache.h"
+#include "render/viewport.h"
 #include <SDL3/SDL.h>
 #include <memory>
 namespace hl {
 struct AtlasDraw {FrameAsset asset;int x{},y{},z{};double scale_x{1},scale_y{1};};
 class Renderer {
+ ScalingMode scaling_{ScalingMode::Fill};
  struct Preload;
  std::unique_ptr<Preload> preload_;
  SDL_Renderer* renderer_{};SDL_Texture* canvas_{};SDL_Texture* processed_{};std::string gpu_failure_,adapter_;
@@ -22,6 +24,7 @@ public:
  ~Renderer();
  static Result<std::unique_ptr<Renderer>> create(SDL_Window* window,std::string_view preference="auto");
  Result<void> use_software(std::string reason);
+ void set_scaling(ScalingMode mode){scaling_=mode;}
  void scene(std::string_view);
  Result<bool> ready(const std::vector<RenderSurface>&,const FrameResolver&,GraphicsMode,std::string_view);
  const std::string& adapter()const{return adapter_;}

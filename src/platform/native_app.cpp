@@ -20,13 +20,22 @@ namespace hl {
 namespace {
 Result<void> write_json(const std::filesystem::path& file,const nlohmann::json& value) {std::ofstream out(file);out<<value.dump(2)<<'\n';if(!out)return DataError{"",file.filename().string(),0,"cannot write native evidence"};return {};}
 }
-std::vector<RenderSurface> options_surfaces(const GraphicsSettings& settings,const BitmapFont& font,bool packed){
- std::vector<RenderSurface> out;RenderSurface panel{64,96,-200,512,182,{}};panel.rgba.resize(512*182*4);for(size_t i=0;i<panel.rgba.size();i+=4){panel.rgba[i]=20;panel.rgba[i+1]=24;panel.rgba[i+2]=32;panel.rgba[i+3]=245;}out.push_back(std::move(panel));
- std::vector<std::string> lines;auto copy=graphics_menu(settings);size_t pos=0;while(pos<copy.size()){auto end=copy.find('\n',pos);lines.push_back(copy.substr(pos,end-pos));if(end==std::string::npos)break;pos=end+1;}lines.push_back(settings.hints_enabled?"Active area hints: On":"Active area hints: Off");lines.push_back(settings.mode==GraphicsMode::Original?"Selected: Original":"Selected: Remastered");lines.push_back("F10: close");
- for(size_t row=0;row<lines.size();++row){std::vector<uint8_t> bytes(lines[row].begin(),lines[row].end());auto mask=render_font(font,bytes);if(!mask.has_value())continue;RenderSurface text{80,112+int(row)*22,-201,int(bytes.size())*8,16,{}};for(auto bit:mask.value())for(auto v:{uint8_t(240),uint8_t(235),uint8_t(210),packed?uint8_t(0):bit})text.rgba.push_back(v);if(packed){text.text_color={240,235,210};for(size_t i=0;i<bytes.size();++i)text.glyphs.push_back({bytes[i],text.x+int(i)*8,text.y});}out.push_back(std::move(text));}return out;
+std::vector<RenderSurface> options_surfaces(const std::vector<OptionRow>& rows,const BitmapFont& font,bool packed){
+ std::vector<RenderSurface> out;
+ auto rectangle=[&](int x,int y,int z,int width,int height,std::array<uint8_t,4> color){RenderSurface surface{x,y,z,width,height,{}};surface.rgba.resize(size_t(width)*height*4);for(size_t i=0;i<surface.rgba.size();i+=4)std::copy(color.begin(),color.end(),surface.rgba.begin()+i);out.push_back(std::move(surface));};
+ rectangle(56,96,-200,528,304,{20,24,32,245});
+ for(const auto& row:rows){
+  if(row.selected)rectangle(row.x,row.y,-201,row.width,24,{55,66,80,255});
+  std::vector<uint8_t> bytes(row.label.begin(),row.label.end());auto mask=render_font(font,bytes);if(!mask.has_value())continue;
+  std::array<uint8_t,3> color=row.enabled?std::array<uint8_t,3>{240,235,210}:std::array<uint8_t,3>{100,104,112};
+  RenderSurface text{row.x+4,row.y+4,-202,int(bytes.size())*8,16,{}};
+  for(auto bit:mask.value())for(auto v:{color[0],color[1],color[2],packed?uint8_t(0):bit})text.rgba.push_back(v);
+  if(packed){text.text_color=color;for(size_t i=0;i<bytes.size();++i)text.glyphs.push_back({bytes[i],text.x+int(i)*8,text.y});}
+  out.push_back(std::move(text));
+ }
+ return out;
 }
 int run_native_app(const AppOptions& options) {
- SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES,"0");
  if(!SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO)){std::cerr<<SDL_GetError()<<'\n';return 1;}
  std::filesystem::path pref_path;
  if(!options.save_directory.empty()){pref_path=std::filesystem::u8path(options.save_directory);std::filesystem::create_directories(pref_path);}
@@ -34,7 +43,7 @@ int run_native_app(const AppOptions& options) {
  auto settings_file=options.graphics_settings.empty()?pref_path/"graphics.json":std::filesystem::u8path(options.graphics_settings);GraphicsSettings settings;
  if(std::filesystem::exists(settings_file)){auto loaded=load_graphics_settings(settings_file);if(!loaded.has_value()){std::cerr<<loaded.error().reason<<'\n';SDL_Quit();return 1;}settings=loaded.value();}
  auto preference=options.renderer.empty()?settings.renderer:options.renderer;
- auto window=SDL_CreateWindow("Horke Leto - F10 options",640,480,SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY|SDL_WINDOW_HIDDEN);
+ auto window=SDL_CreateWindow("Horke Leto - O nastaveni | G grafika",640,480,SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY|SDL_WINDOW_HIDDEN);
  if(window){auto configured=configure_window(window,settings);if(!configured.has_value()){std::cerr<<configured.error().reason<<'\n';SDL_DestroyWindow(window);SDL_Quit();return 1;}}
  if(window&&!SDL_ShowWindow(window)){std::cerr<<SDL_GetError()<<'\n';SDL_DestroyWindow(window);SDL_Quit();return 1;}
  auto renderer=Renderer::create(window,preference);
@@ -54,13 +63,14 @@ int run_native_app(const AppOptions& options) {
  auto font_bytes=read_file(std::filesystem::u8path(options.data_path)/"HL.EXE");auto font=font_bytes.has_value()?load_original_font({font_bytes.value(),252284}):Result<BitmapFont>{font_bytes.error()};if(!font.has_value())setup=font.error();
  nlohmann::json fade_steps=nlohmann::json::array();
  auto draw_game=[&]()->Result<void>{
+  renderer.value()->set_scaling(graphics.settings().scaling);
   renderer.value()->scene(game.scene());
   auto surfaces=game.render_surfaces(bool(original));if(!surfaces.has_value())return surfaces.error();
   auto palette=game.palette_view();auto palette_hash=sha256(std::as_bytes(std::span(palette.source)));
   bool ready=true;
   if(original&&graphics.mode()!=graphics.requested_mode()){FrameResolver resolver(*original,remastered?&*remastered:nullptr);auto loaded=renderer.value()->ready(surfaces.value(),resolver,graphics.requested_mode(),palette_hash);if(!loaded.has_value())return loaded.error();ready=loaded.value();}
   bool changed=graphics.frame_boundary(ready);if(changed||settings_dirty){auto saved=save_graphics_settings(settings_file,graphics.settings());if(!saved.has_value())return saved;settings_dirty=false;}
-  auto markers=graphics.hints_visible()?hint_surfaces(game.active_areas(),true):std::vector<RenderSurface>{};for(auto& marker:markers)surfaces.value().push_back(std::move(marker));if(menu_open){auto panel=options_surfaces(graphics.settings(),font.value(),bool(original));for(auto& surface:panel)surfaces.value().push_back(std::move(surface));}
+  auto markers=graphics.hints_visible()?hint_surfaces(game.active_areas(),true):std::vector<RenderSurface>{};for(auto& marker:markers)surfaces.value().push_back(std::move(marker));if(menu_open){auto usable=usable_window_size(window);if(!usable.has_value())return usable.error();auto panel=options_surfaces(options_rows(graphics.settings(),usable.value()),font.value(),bool(original));for(auto& surface:panel)surfaces.value().push_back(std::move(surface));}
   if(!original)return renderer.value()->present(std::move(surfaces.value()));
   auto effect=palette_postprocess(palette);if(!effect.has_value())return effect.error();FrameResolver resolver(*original,remastered?&*remastered:nullptr);return renderer.value()->present(std::move(surfaces.value()),resolver,graphics.mode(),palette_hash,effect.value());
  };
@@ -81,10 +91,20 @@ int run_native_app(const AppOptions& options) {
  nlohmann::json runtime_frames=nlohmann::json::array();uint64_t max_update_backlog=0;auto prior_frame=std::chrono::steady_clock::now();
  auto input_event=[&](const SDL_Event& event)->Result<void>{
   auto changed_window=window_event(window,graphics,event);if(!changed_window.has_value())return changed_window.error();if(changed_window.value()){settings_dirty=true;return {};}
-  if(event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP)if(graphics.key(SDL_GetKeyName(event.key.key),event.type==SDL_EVENT_KEY_DOWN,event.key.repeat))return {};
-  if(event.type==SDL_EVENT_KEY_DOWN&&event.key.key==SDLK_F10&&!event.key.repeat){menu_open=!menu_open;if(!(menu_open?SDL_ShowCursor():SDL_HideCursor()))return DataError{"","options cursor",0,SDL_GetError()};return {};}
+  if(graphics_event(graphics,event,game.editing_save_name()))return {};
+  if(options_shortcut(event,game.editing_save_name())){menu_open=!menu_open;if(!(menu_open?SDL_ShowCursor():SDL_HideCursor()))return DataError{"","options cursor",0,SDL_GetError()};return {};}
   if(menu_open&&event.type==SDL_EVENT_KEY_DOWN&&event.key.key==SDLK_ESCAPE){menu_open=false;if(!SDL_HideCursor())return DataError{"","options cursor",0,SDL_GetError()};return {};}
-  if(menu_open){if(event.type==SDL_EVENT_MOUSE_BUTTON_DOWN&&event.button.button==SDL_BUTTON_LEFT){int w,h,pw,ph;SDL_GetWindowSize(window,&w,&h);SDL_GetRenderOutputSize(renderer.value()->sdl(),&pw,&ph);auto point=Viewport::window_to_logical({event.button.x,event.button.y},{w,h,pw,ph});if(point&&point->x>=64&&point->x<576){if(point->y>=108&&point->y<132)graphics.toggle();if(point->y>=196&&point->y<220){graphics.set_hints_enabled(!graphics.settings().hints_enabled);settings_dirty=true;}}}return {};}
+  if(menu_open){
+   if(event.type==SDL_EVENT_MOUSE_BUTTON_DOWN&&event.button.button==SDL_BUTTON_LEFT){
+    int w,h,pw,ph;if(!SDL_GetWindowSize(window,&w,&h)||!SDL_GetRenderOutputSize(renderer.value()->sdl(),&pw,&ph))return DataError{"","options pointer",0,SDL_GetError()};
+    auto point=Viewport::window_to_logical({event.button.x,event.button.y},{w,h,pw,ph},graphics.settings().scaling);
+    auto usable=usable_window_size(window);if(!usable.has_value())return usable.error();
+    auto row=point?option_at(options_rows(graphics.settings(),usable.value()),*point):std::nullopt;
+    if(row){if(row->action==OptionAction::Close){menu_open=false;if(!SDL_HideCursor())return DataError{"","options cursor",0,SDL_GetError()};}
+     else {auto applied=apply_option(window,graphics,*row);if(!applied.has_value())return applied;settings_dirty=true;}}
+   }
+   return {};
+  }
   if(event.type==SDL_EVENT_TEXT_INPUT)return game.text_input(event.text.text);
   if(event.type==SDL_EVENT_KEY_DOWN&&game.editing_save_name()){if(event.key.key==SDLK_RETURN)return game.edit_key("enter");if(event.key.key==SDLK_BACKSPACE)return game.edit_key("backspace");if(event.key.key==SDLK_ESCAPE)return game.edit_key("escape");return {};}
   if(event.type==SDL_EVENT_KEY_DOWN){if(event.key.key==SDLK_ESCAPE){if(!event.key.repeat)return game.escape();return {};}
@@ -92,7 +112,7 @@ int run_native_app(const AppOptions& options) {
    if(event.key.key==SDLK_F2&&game.can_save()){auto r=game.save(file);if(r.has_value())++quick_saves;return r;}
    if(event.key.key==SDLK_F3&&std::filesystem::exists(file)){auto r=game.load(file);if(r.has_value())++quick_loads;return r;}
   }
-  if(event.type==SDL_EVENT_MOUSE_MOTION||event.type==SDL_EVENT_MOUSE_BUTTON_DOWN)return dispatch_runtime_mouse(game,window,renderer.value()->sdl(),event);
+  if(event.type==SDL_EVENT_MOUSE_MOTION||event.type==SDL_EVENT_MOUSE_BUTTON_DOWN)return dispatch_runtime_mouse(game,window,renderer.value()->sdl(),event,graphics.settings().scaling);
   return {};
  };
  uint64_t start=SDL_GetTicks(),updates=0,last_capture=UINT64_MAX,submitted_frames=0;bool quit=false;
@@ -100,6 +120,7 @@ int run_native_app(const AppOptions& options) {
  while(result.has_value()&&!quit&&!game.quit_requested()) {
   auto frame_begin=std::chrono::steady_clock::now();auto updates_before=updates;
   uint64_t elapsed=SDL_GetTicks()-start;
+  if(game.editing_save_name())graphics.focus_lost();
   if(game.editing_save_name()&&!SDL_TextInputActive(window))SDL_StartTextInput(window);else if(!game.editing_save_name()&&SDL_TextInputActive(window))SDL_StopTextInput(window);
   SDL_Event event;
   while(SDL_PollEvent(&event)) {
@@ -116,7 +137,7 @@ int run_native_app(const AppOptions& options) {
     SDL_Event input{};
     if(e.kind=="key_down"||e.kind=="key_up"){input.type=e.kind=="key_down"?SDL_EVENT_KEY_DOWN:SDL_EVENT_KEY_UP;input.key.key=SDL_GetKeyFromName(e.key.c_str());}
     else if(e.kind=="text_input"){input.type=SDL_EVENT_TEXT_INPUT;input.text.text=e.text.c_str();}
-    else {int w,h,pw,ph;SDL_GetWindowSize(window,&w,&h);SDL_GetRenderOutputSize(renderer.value()->sdl(),&pw,&ph);auto v=Viewport::fit(pw,ph);float x=float((v.x+(e.logical_x+0.5)*v.width/640)*w/pw),y=float((v.y+(e.logical_y+0.5)*v.height/480)*h/ph);
+    else {int w,h,pw,ph;SDL_GetWindowSize(window,&w,&h);SDL_GetRenderOutputSize(renderer.value()->sdl(),&pw,&ph);auto v=Viewport::fit(pw,ph,graphics.settings().scaling);float x=float((v.x+(e.logical_x+0.5)*v.width/640)*w/pw),y=float((v.y+(e.logical_y+0.5)*v.height/480)*h/ph);
      if(e.kind=="mouse_move"){input.type=SDL_EVENT_MOUSE_MOTION;input.motion.x=x;input.motion.y=y;}
      else {input.type=e.kind=="mouse_down"?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;input.button.x=x;input.button.y=y;input.button.button=e.button=="left"?SDL_BUTTON_LEFT:e.button=="right"?SDL_BUTTON_RIGHT:SDL_BUTTON_MIDDLE;}
     }
@@ -134,7 +155,7 @@ int run_native_app(const AppOptions& options) {
   auto draw_end=std::chrono::steady_clock::now();
   uint64_t bucket=elapsed/1000;
   if(!output.empty()&&last_capture!=bucket) {
-   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(game.checkpoint()));checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();
+   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(game.checkpoint()));checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["display_settings"]={{"fullscreen",graphics.settings().fullscreen},{"window_width",graphics.settings().window_width},{"window_height",graphics.settings().window_height},{"scaling",graphics.settings().scaling==ScalingMode::Fill?"fill":graphics.settings().scaling==ScalingMode::Whole?"whole":"stretch"},{"active_area_hints",graphics.settings().hints_enabled}};checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();
    auto path=output/("tick-"+std::to_string(bucket*1000));auto captured=renderer.value()->readback();
    if(!captured.has_value()){result=captured.error();break;}
    auto model=game.rgba();if(!model.has_value()){result=model.error();break;}
@@ -158,7 +179,7 @@ int run_native_app(const AppOptions& options) {
  if(result.has_value()&&settings_dirty)result=save_graphics_settings(settings_file,graphics.settings());
  if(audio_file){audio_file.close();if(!audio_file)result=DataError{"","audio capture",0,"audio capture write failed"};}
  if(!options.opcode_trace_path.empty()){std::ofstream out(std::filesystem::u8path(options.opcode_trace_path));for(const auto& entry:game.trace())out<<entry.dump()<<'\n';if(!out)result=DataError{"","trace",0,"opcode trace write failed"};}
- nlohmann::json report{{"runtime_frames",runtime_frames},{"max_update_backlog",max_update_backlog},{"runtime_timing_scope","actual loop including updates, input, audio submission, composition, present and any requested captures; frame intervals also include sleep"},{"options_open",menu_open},{"cursor_visible",SDL_CursorVisible()},{"quick_saves",quick_saves},{"quick_loads",quick_loads},{"schema_version",1},{"platform",SDL_GetPlatform()},{"sdl_version",SDL_GetVersion()},{"backend",renderer.value()->backend()},{"gpu_failure",renderer.value()->gpu_failure()},{"adapter",renderer.value()->adapter()},{"renderer_preference",preference},{"fade_steps",fade_steps},{"updates",updates},{"elapsed_ms",SDL_GetTicks()-start},{"audio_submitted_frames",submitted_frames},{"audio_rate",48000},{"audio_channels",2},{"audio_queued_bytes_at_exit",SDL_GetAudioStreamQueued(stream)},{"scene",game.scene()},{"graphics",graphics.mode()==GraphicsMode::Original?"Original":"Remastered"},{"texture_working_set_bytes",renderer.value()->cache_bytes()},{"exit_code",result.has_value()?0:1},{"capture_method","SDL GPU/renderer readback before present"},{"synchronization",replay?"original startup scripts advanced to stable 126y menu before timed route":"normal startup"}};
+ nlohmann::json report{{"macos_fullscreen_spaces",SDL_GetHintBoolean(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES,true)},{"runtime_frames",runtime_frames},{"max_update_backlog",max_update_backlog},{"runtime_timing_scope","actual loop including updates, input, audio submission, composition, present and any requested captures; frame intervals also include sleep"},{"options_open",menu_open},{"cursor_visible",SDL_CursorVisible()},{"quick_saves",quick_saves},{"quick_loads",quick_loads},{"schema_version",1},{"platform",SDL_GetPlatform()},{"sdl_version",SDL_GetVersion()},{"backend",renderer.value()->backend()},{"gpu_failure",renderer.value()->gpu_failure()},{"adapter",renderer.value()->adapter()},{"renderer_preference",preference},{"fade_steps",fade_steps},{"updates",updates},{"elapsed_ms",SDL_GetTicks()-start},{"audio_submitted_frames",submitted_frames},{"audio_rate",48000},{"audio_channels",2},{"audio_queued_bytes_at_exit",SDL_GetAudioStreamQueued(stream)},{"scene",game.scene()},{"graphics",graphics.mode()==GraphicsMode::Original?"Original":"Remastered"},{"texture_working_set_bytes",renderer.value()->cache_bytes()},{"exit_code",result.has_value()?0:1},{"capture_method","SDL GPU/renderer readback before present"},{"synchronization",replay?"original startup scripts advanced to stable 126y menu before timed route":"normal startup"}};
  if(!result.has_value()){auto e=result.error();report["error"]={{"object",e.resource},{"offset",e.byte_offset},{"reason",e.reason}};std::cerr<<e.resource<<":"<<e.byte_offset<<" "<<e.reason<<'\n';}
  SDL_DestroyAudioStream(stream);renderer.value().reset();SDL_DestroyWindow(window);SDL_Quit();report["resources_released"]=true;
  if(!options.report_path.empty()){auto saved=write_json(std::filesystem::u8path(options.report_path),report);if(!saved.has_value())return 1;}
