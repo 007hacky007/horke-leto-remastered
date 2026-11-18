@@ -23,7 +23,7 @@ static Check check_disc(const fs::path& image, const std::string& drive, const j
                 return c;
             }
         }
-        c.text = "CD v mechanice " + drive + ": herní soubory sedí. Hudbu přečteme při sestavení.";
+        c.text = "CD v mechanice " + drive + ": herní soubory sedí.";
         return c;
     }
     if (image.empty()) { c.state = Check::Fail; c.text = "Nevybral jsi žádnou zálohu."; c.hint = "Vrať se a vyber obraz CD."; return c; }
@@ -52,8 +52,8 @@ static Check check_space(const fs::path& output) {
     double done = folder_gb(output / ".builder");
     double need = std::max(FINAL_GB, NEED_GB - done);
     char text[200];
-    std::snprintf(text, sizeof text, "Volných %.0f GB, potřebujeme asi %.0f GB. Po úklidu zůstane hra, asi %.0f GB.%s",
-                  free, need, FINAL_GB, done > 1 ? " Navážeme na rozdělané sestavení." : "");
+    std::snprintf(text, sizeof text, "Volných %.0f GB, potřebujeme asi %.0f GB. Po úklidu finální hra zabere asi %.0f GB.%s",
+                  free, need, FINAL_GB, done > 1 ? " Navážeme na předchozí běh." : "");
     c.text = text;
     if (free < need) { c.state = Check::Fail; c.hint = "Vyber jiný disk nebo uvolni místo."; c.fix = "output"; }
     return c;
@@ -81,7 +81,7 @@ static Check check_write(const fs::path& output, const fs::path& image) {
 }
 
 static Check check_gpu() {
-    Check c{"gpu", "Grafika pro zvětšování"};
+    Check c{"gpu", "Grafický engine pro upscaling"};
 #ifdef _WIN32
     HMODULE vulkan = LoadLibraryW(L"vulkan-1.dll");
     if (!vulkan) { c.state = Check::Fail; c.text = "Chybí Vulkan, zvětšování bez něj nepojede."; c.hint = "Nainstaluj aktuální ovladač grafické karty."; }
@@ -93,7 +93,7 @@ static Check check_gpu() {
 }
 
 static Check check_network(const json& pins, const fs::path& archive) {
-    Check c{"network", "Výtvarný balíček"};
+    Check c{"network", "Remaster data"};
     if (!archive.empty()) { c.text = "Použijeme místní archiv " + archive.filename().string() + "."; return c; }
     std::string version = pins.at("art").at("version");
     if (!url_reachable(pins.at("art").at("url"))) {
@@ -104,8 +104,8 @@ static Check check_network(const json& pins, const fs::path& archive) {
 }
 
 static Check check_art(const json& pins, const fs::path& archive) {
-    Check c{"art", "Kontrolní součet balíčku"};
-    if (archive.empty()) { c.text = "SHA-256 ověříme hned po stažení."; return c; }
+    Check c{"art", "Kontrolní součet remaster dat"};
+    if (archive.empty()) { c.text = "SHA-256 ověřeno hned po stažení."; return c; }
     if (sha_file(archive) != pins.at("art").at("sha256").get<std::string>()) {
         c.state = Check::Fail; c.text = "Archiv má jiný kontrolní součet.";
         c.hint = "Stáhni přesně verzi " + pins.at("art").at("version").get<std::string>() + "."; c.fix = "archive";
@@ -123,13 +123,13 @@ void run_preflight(const fs::path& image, const std::string& drive, const fs::pa
     guard("disc", "Správné vydání hry", [&] { return check_disc(image, drive, pins); });
     guard("space", "Místo na disku", [&] { return check_space(output); });
     guard("write", "Cílová složka", [&] { return check_write(output, image); });
-    guard("gpu", "Grafika pro zvětšování", check_gpu);
-    guard("network", "Výtvarný balíček", [&] { return check_network(pins, archive); });
+    guard("gpu", "Grafický engine pro upscaling", check_gpu);
+    guard("network", "Remaster data", [&] { return check_network(pins, archive); });
     guard("art", "Kontrolní součet balíčku", [&] { return check_art(pins, archive); });
 #ifdef _WIN32
-    row({"time", "Odhad času", Check::Ok, "Asi 1 až 2 hodiny podle grafické karty. Přerušené sestavení umí pokračovat."});
+    row({"time", "Odhad času", Check::Ok, "Asi 1 až 2 hodiny podle grafické karty. Po přerušení se naváže na předchozí práci."});
 #else
-    row({"time", "Odhad času", Check::Ok, "Asi 75 minut na M1 Pro. Přerušené sestavení umí pokračovat."});
+    row({"time", "Odhad času", Check::Ok, "Asi 75 minut na M1 Pro. Po přerušení se naváže na předchozí práci."});
 #endif
 }
 }

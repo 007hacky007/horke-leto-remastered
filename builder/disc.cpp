@@ -381,7 +381,7 @@ fs::path rip_drive(const std::string& letter, const fs::path& work, const DiscPi
             out.write(reinterpret_cast<char*>(sector), SECTOR);
         }
         done += n;
-        emit("Čtu CD: " + std::to_string(done) + "/" + std::to_string(total) + " sektorů");
+        emit("Čtu CD data: " + std::to_string(done) + "/" + std::to_string(total) + " sektorů");
         check_cancelled();
     }
     for (int at = track2; at < leadout; at += 16) {
@@ -394,7 +394,7 @@ fs::path rip_drive(const std::string& letter, const fs::path& work, const DiscPi
             throw UserError("Zvukovou stopu nejde přečíst (sektor " + std::to_string(at) + "). Zkus CD očistit.");
         out.write(reinterpret_cast<char*>(raw.data()), std::streamsize(n * SECTOR));
         done += n;
-        emit("Čtu CD: " + std::to_string(done) + "/" + std::to_string(total) + " sektorů");
+        emit("Čtu CD data: " + std::to_string(done) + "/" + std::to_string(total) + " sektorů");
         check_cancelled();
     }
     out.close();

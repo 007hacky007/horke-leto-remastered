@@ -1,4 +1,5 @@
 #include "platform/app.h"
+#include <cstdio>
 #include "script/intro_runtime.h"
 #include "debug/replay.h"
 #include "platform/runtime_mouse.h"
@@ -94,6 +95,8 @@ int run_native_app(const AppOptions& options) {
  nlohmann::json runtime_frames=nlohmann::json::array();uint64_t max_update_backlog=0;auto prior_frame=std::chrono::steady_clock::now();
  auto input_event=[&](const SDL_Event& event)->Result<void>{
   if(event.type==SDL_EVENT_MOUSE_BUTTON_DOWN)help.dismiss();
+  // Diagnostics: HL_LOG_KEYS=<file> records every key event (support for players' keyboard problems).
+  if((event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP)&&SDL_getenv("HL_LOG_KEYS")){if(auto* f=std::fopen(SDL_getenv("HL_LOG_KEYS"),"a")){std::fprintf(f,"%s key=%u name=%s scancode=%d mod=%04x repeat=%d editing=%d menu=%d\n",event.type==SDL_EVENT_KEY_DOWN?"down":"up",unsigned(event.key.key),SDL_GetKeyName(event.key.key),int(event.key.scancode),unsigned(event.key.mod),int(event.key.repeat),int(game.editing_save_name()),int(menu_open));std::fclose(f);}}
   bool show_help=help_shortcut(event,game.editing_save_name());if(show_help)help.show(SDL_GetTicks());
   auto changed_window=window_event(window,graphics,event);if(!changed_window.has_value())return changed_window.error();if(changed_window.value()){settings_dirty=true;return {};}
   if(graphics_event(graphics,event,game.editing_save_name())||show_help)return {};

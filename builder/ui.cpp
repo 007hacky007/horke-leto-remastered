@@ -286,13 +286,13 @@ void segments(float x, float y, float w, float h, double fraction, int marquee =
 // ---- application state ----
 struct Stage { const char* key; double share; const char* title; const char* why; const char* dialog; const char* glyph; };
 const Stage STAGES[] = {
-    {"read", 6, "Čteme tvoje CD", "Data hry a hudba ze stop 2 a 3. Na CD nic neměníme.", "Načítání CD...", "disc-16"},
+    {"read", 6, "Čteme herní data", "Herní data + audio (CD stopa 2 a 3)", "Načítání CD...", "disc-16"},
     {"extract", 6, "Vybalujeme obrázky", "Z archivu GFX.GRP dekódujeme všech 595 obrázků a animací FLC.", "Kopírování...", "folder-16"},
-    {"download", 5, "Stahujeme překresby", "Šifrovaný výtvarný balíček z GitHubu. Kontrolujeme SHA-256.", "Stahování...", "floppy-16"},
-    {"decrypt", 5, "Odemykáme překresby", "Klíčem jsou obrázky z tvého CD. Bez něj jsou to jen náhodná data.", "Odemykání překreseb...", "padlock-16"},
-    {"upscale", 61, "Zvětšujeme 3x", "Každý snímek z 640 x 480 na 1920 x 1440. Tady se čeká nejdéle.", "Zvětšování 3x...", "magnifier-16"},
-    {"remaster", 13, "Skládáme balíčky", "Spojujeme překresby se zvětšenými animacemi do Original a Remastered.", "Sestavování balíčků...", "gear-16"},
-    {"app", 4, "Vytváříme hru", "Spouštěč, data, hudba, ikona z tvého CD a závěrečná kontrola.", "Vytváření aplikace...", "gear-16"},
+    {"download", 5, "Stahujeme remaster data", "Kontrolujeme kontrolní součet remasterovaných dat.", "Stahování...", "floppy-16"},
+    {"decrypt", 5, "Dešifrování remaster dat", "Klíčem jsou obrázky z tvých herních dat (z tvé zálohy). Bez něj není možné remaster dešifrovat.", "Dešifrování remasterovaných obrázků...", "padlock-16"},
+    {"upscale", 61, "Upscaling 3x", "Každý snímek z 640 x 480 na 1920 x 1440. Tato část zabere nejvíc času.", "Upscaling 3x", "magnifier-16"},
+    {"remaster", 13, "Skládáme balíčky", "Spojujeme remaster se upscaled animacemi do Original a Remastered.", "Sestavování balíčků...", "gear-16"},
+    {"app", 4, "Vytváříme hru", "Spouštěč, data, hudba, ikona z tvých herních dat a závěrečná kontrola.", "Vytváření aplikace...", "gear-16"},
 };
 int stage_index(const std::string& key) {
     for (int i = 0; i < 7; ++i) if (key == STAGES[i].key) return i;
@@ -523,7 +523,7 @@ void handle(const std::string& line) {
     }
     add_log(line);
     int done = 0, total = 0, percent = 0;
-    if (std::sscanf(line.c_str(), "Čtu CD: %d/%d", &done, &total) == 2 && total) progress(double(done) / total, std::to_string(done) + " / " + std::to_string(total), "");
+    if (std::sscanf(line.c_str(), "Čtu CD data: %d/%d", &done, &total) == 2 && total) progress(double(done) / total, std::to_string(done) + " / " + std::to_string(total), "");
     auto at = line.find("Download ");
     if (at != std::string::npos && std::sscanf(line.c_str() + at, "Download %d%%", &percent) == 1) progress(percent / 100.0, std::to_string(percent) + " %", "art.zip");
 }
@@ -623,7 +623,7 @@ void choose_archive() {
 
 // ---- pages (layout follows the approved mockup, design D) ----
 const SDL_Color INK{20, 20, 20, 255}, NOTE{70, 70, 70, 255}, ACCENT{0, 0, 160, 255}, OKC{0, 128, 0, 255}, WARNC{160, 120, 0, 255}, FAILC{192, 0, 0, 255};
-const char* EYEBROW[] = {"ČTENÍ CD", "GRP / FLC", "STAŽENÍ", "DEŠIFROVÁNÍ", "ZVĚTŠENÍ 3X", "REMASTER", "SESTAVENÍ"};
+const char* EYEBROW[] = {"ČTENÍ CD", "GRP / FLC", "STAŽENÍ", "DEŠIFROVÁNÍ", "UPSCALING 3X", "REMASTER", "SESTAVENÍ"};
 constexpr float CX = 0, CY = 46, CW = W, CH = H - 46 - 84;  // content area between tabs and footer
 
 void eyebrow(float x, float y, const std::string& s) { text(tiny, x, y, s, ACCENT); }
@@ -636,7 +636,7 @@ void hatch(float x, float y, float w, float h) {
 }
 
 void chrome() {
-    const char* tabs[] = {"Tvoje CD", "Kontrola", "Sestavení", "Hotovo"};
+    const char* tabs[] = {"Originální herní data", "Kontrola", "Remaster", "Hotovo"};
     float tw = (W - 12) / 4.0f;
     for (int i = 0; i < 4; ++i) {
         float x = 6 + i * tw, y = 6;
@@ -697,13 +697,12 @@ bool tile_option(float x, float y, float w, float h, const char* glyph, const st
 void page_source() {
     hatch(24, CY + 56, 240, 352);
     draw(icon("cdr-192"), 48, CY + 112, 192, 192);
-    text(tiny, 144 - text_width(tiny, "TVOJE CÉDÉČKO, TVOJE HRA") / 2, CY + 384, "TVOJE CÉDÉČKO, TVOJE HRA", NOTE);
     float x = 292, w = W - x - 24, y = CY + 56;
-    eyebrow(x, y, "HORKÉ LÉTO / REMASTERED");
-    text(heading, x, y + 16, "Vytáhni svoje cédečko.");
-    text(regular, x, y + 50, "Vyber obraz svého CD. Ověříme data a sestavíme hru.", NOTE);
+    eyebrow(x, y, "HORKÉ LÉTO 1");
+    text(heading, x, y + 16, "Vytáhni svoje cédečko. Nebo jeho CD image soubor.");
+    text(regular, x, y + 50, "Vyber obraz svého CD. Ověříme data a sestavíme remaster.", NOTE);
     float tw = (w - 12) / 2;
-    if (tile_option(x, y + 72, tw, 72, "document-32", "Obraz CD", app.use_drive ? "OBRAZ NA DISKU" : "VYBRÁNO", !app.use_drive, true)) app.use_drive = false;
+    if (tile_option(x, y + 72, tw, 72, "document-32", "CD image", app.use_drive ? "OBRAZ NA DISKU" : "VYBRÁNO", !app.use_drive, true)) app.use_drive = false;
 #ifdef _WIN32
     bool drives = !app.drives.empty();
     if (tile_option(x + tw + 12, y + 72, tw, 72, "disc-32", "CD mechanika", drives ? (app.use_drive ? "VYBRÁNO" : "Z MECHANIKY") : "ŽÁDNÁ MECHANIKA", app.use_drive, drives)) app.use_drive = true;
@@ -713,14 +712,16 @@ void page_source() {
 #endif
     float ry = y + 176;
     if (!app.use_drive) {
-        if (button(x, ry, 132, 26, "  Vybrat soubor...")) choose_image();
+        const char* pick = "Vybrat image obraz CD...";
+        float pw = text_width(regular, pick) + 44;  // folder icon + padding; grows with the text
+        if (button(x, ry, pw, 26, std::string("     ") + pick)) choose_image();
         draw(icon("folder-16"), x + 8, ry + 5, 16, 16);
-        text(mono, x + 144, ry + 6, elide(mono, app.image.empty() ? "nic nevybráno" : fs::u8path(app.image).filename().string(), w - 150), app.image.empty() ? NOTE : INK);
+        text(mono, x + pw + 12, ry + 6, elide(mono, app.image.empty() ? "nic nevybráno" : fs::u8path(app.image).filename().string(), w - pw - 18), app.image.empty() ? NOTE : INK);
         if (!app.detected.empty()) {
             draw(icon("document-16"), x, ry + 34, 16, 16);
             text(regular, x + 22, ry + 34, app.detected, INK);
         }
-        text(regular, x, ry + 56, "Formát poznáme sám: BIN/CUE, IMG/CCD, MDF/MDS nebo NRG.", NOTE);
+        text(regular, x, ry + 56, "Podporované formáty: BIN/CUE, IMG/CCD, MDF/MDS nebo NRG.", NOTE);
     } else {
         text(regular, x, ry + 6, "Mechanika:", INK);
         std::string label = app.drives.empty() ? "-" : app.drives[app.drive].letter + "  " + app.drives[app.drive].label + (app.drives.size() > 1 ? "   ▼" : "");
@@ -735,11 +736,10 @@ void page_source() {
     text(mono, x + 26, fy + 26, elide(mono, app.output, w - 140), INK);
     if (button(x + w - 92, fy + 12, 92, 28, "Změnit")) choose_output();
     fill(x, fy + 52, w, 1, SHADOW); fill(x, fy + 53, w, 1, LIGHT);
-    if (checkbox(x, fy + 66, "Odstranit dočasné soubory po sestavení", app.cleanup)) app.cleanup = !app.cleanup;
-    text(regular, x, fy + 92, "Potřebuješ asi 40 GB volného místa, hotová hra zabere asi 9 GB.", NOTE);
-    text(regular, W / 2 - text_width(regular, "Původní CD zůstane beze změn.") / 2, H - 34, "Původní CD zůstane beze změn.", NOTE);
+    if (checkbox(x, fy + 66, "Po skončení odstranit dočasné soubory", app.cleanup)) app.cleanup = !app.cleanup;
+    text(regular, x, fy + 92, "Potřebuješ asi 40 GB volného místa pro dočasné soubory. Výsledná hotová hra zabere asi 9 GB.", NOTE);
     bool ready = app.use_drive || !app.image.empty();
-    if (button(W - 230, H - 44, 210, 32, "Zkontrolovat CD a počítač", ready, true) || (in.enter && ready)) start_checks();
+    if (button(W - 230, H - 44, 210, 32, "Další", ready, true) || (in.enter && ready)) start_checks();
 }
 
 std::string when(int64_t seconds) {
@@ -756,13 +756,13 @@ void resume_dialog() {
     fill(x + 4, y + 4, w, h, SDL_Color{0, 0, 0, 90});
     fill(x, y, w, h, FACE);
     bevel(x, y, w, h, false);
-    title_bar(x + 3, y + 3, w - 6, 22, "Rozdělané sestavení", icon("disc-16"));
+    title_bar(x + 3, y + 3, w - 6, 22, "Rozpracované sestavení", icon("disc-16"));
     float cx = x + 20, cy = y + 40;
     draw(icon("cdr-128"), cx, cy + 6, 72, 72);
     float tx = cx + 92, tw = w - (tx - x) - 20;
     text(bold, tx, cy, "Minule se sestavení nedokončilo.", INK);
-    text(regular, tx, cy + 22, "Můžeš pokračovat se stejným nastavením, hotové", NOTE);
-    text(regular, tx, cy + 40, "části se znovu nepočítají.", NOTE);
+    text(regular, tx, cy + 22, "Můžeš pokračovat se stejným nastavením.", NOTE);
+    text(regular, tx, cy + 40, "Již hotové části se přeskočí.", NOTE);
     std::string source = r.drive.empty() ? fs::u8path(r.image).filename().string() : "mechanika " + r.drive;
     const std::pair<const char*, std::string> rows[] = {
         {"CD", source}, {"Cíl", r.output},
@@ -807,7 +807,7 @@ void resume_dialog() {
             if (!fs::exists(fs::u8path(r.image))) { app.resume_error = "Obraz CD už na původním místě není. Vyber ho přes Změnit nastavení."; return; }
             app.use_drive = false; app.image = r.image;
         }
-        if (!r.archive.empty() && !fs::exists(fs::u8path(r.archive))) { app.resume_error = "Archiv s překresbami už na původním místě není."; return; }
+        if (!r.archive.empty() && !fs::exists(fs::u8path(r.archive))) { app.resume_error = "Archiv s remaster daty už na původním místě není."; return; }
         app.output = r.output; app.archive = r.archive; app.cleanup = r.cleanup;
         start_build();
     }
@@ -890,7 +890,7 @@ void game_update_dialog() {
     case App::GameUpdate::Offer:
         text(bold, tx, cy, "Tvoje hra má starší engine.", INK);
         text(regular, tx, cy + 22, "Vyměníme jen engine. Obrázky, hudba", NOTE);
-        text(regular, tx, cy + 40, "i uložené pozice zůstanou.", NOTE);
+        text(regular, tx, cy + 40, "i uložené pozice zůstanou původní.", NOTE);
 #ifdef _WIN32
         text(regular, tx, cy + 58, "Zabere to jen pár vteřin.", NOTE);
 #else
@@ -1016,7 +1016,7 @@ void update_toast() {
         return;
     }
     text(bold, x + 52, y + 9, "Nová verze " + app.update_info.version + "!", INK);
-    text(small, x + 52, y + 28, std::string("Máš ") + builder_version() + ". Stáhne se a spustí sama.", NOTE);
+    text(small, x + 52, y + 28, std::string("Máš ") + builder_version() + ". Aktualizovat stáhne a spustí novou verzi.", NOTE);
     if (button(x + w - 110, y + 12, 100, 26, "Aktualizovat", true, true)) start_update_download();
     if (inside(x + w - 18, y + 2, 16, 12) && in.released) app.update_dismissed = true;
     text(tiny, x + w - 14, y + 2, "x", NOTE);
@@ -1059,7 +1059,7 @@ void update_dialog() {
         double mb = app.update_info.bytes / 1048576.0;
         std::snprintf(line_text, sizeof line_text, "Stahuji verzi %s: %.1f MB z %.1f MB", app.update_info.version.c_str(), mb * app.update_fraction, mb);
         text(bold, x + 20, ty, line_text, INK);
-        text(regular, x + 20, ty + 22, "Kontrolní součet ověříme, než ji spustíme.", NOTE);
+        text(regular, x + 20, ty + 22, "Po stažení se ověří kontrolní součet.", NOTE);
     }
     segments(x + 20, ty + 46, w - 40, 20, app.update == App::Update::Starting ? 1.0 : app.update_fraction, -1);
     float by = y + h - 42;
@@ -1088,7 +1088,7 @@ void page_checks() {
     }
     float x = 24, w = W - 48, y = CY + 14;
     eyebrow(x, y, "KONTROLA PŘED STARTEM");
-    text(heading, x, y + 16, running ? "Proklepneme to..." : fail ? "Tady to chce nejdřív opravit." : warn ? "Půjde to. Jen to má háček." : "Připraveno k sestavení.");
+    text(heading, x, y + 16, running ? "Proklepneme to..." : fail ? "Tady to chce nejdřív opravit." : warn ? "Půjde to. Ale má to háček." : "Vše v pořádku. Připraveno na sestavení remasteru.");
     std::string totals = running ? "OVĚŘUJEME" : std::to_string(ok) + " OK / " + std::to_string(warn) + " POZOR / " + std::to_string(fail) + " CHYBA";
     float bw = text_width(tiny, totals) + 20;
     fill(x + w - bw, y + 12, bw, 24, SDL_Color{224, 224, 224, 255}); bevel(x + w - bw, y + 12, bw, 24, true);
@@ -1099,7 +1099,7 @@ void page_checks() {
     fill(x + 190, ly + 3, 8, 8, FAILC); text(tiny, x + 202, ly, "Brání sestavení", INK);
     if (button(x + w - 150, ly - 6, 150, 22, "Zkontrolovat znovu", !running)) start_checks();
     float ty = ly + 24;
-    title_bar(x, ty, w, 22, "Kontrola systému a herního CD", icon("magnifier-16"));
+    title_bar(x, ty, w, 22, "Kontrola systému a herních dat", icon("magnifier-16"));
     float listy = ty + 22, listh = CY + CH - 34 - listy;
     fill(x, listy, w, listh, LIGHT);
     const std::map<std::string, const char*> glyphs{{"disc", "disc-16"}, {"space", "floppy-16"}, {"write", "folder-16"}, {"gpu", "gear-16"},
@@ -1125,12 +1125,11 @@ void page_checks() {
         text(mono, x + 40, ry + 10, std::string("[ ČEKÁ ] ") + spin[(SDL_GetTicks() / 150) % 4] + "  Ověřujeme...", NOTE);
     }
     std::string conclusion = running ? "Čekáme na dokončení kontrol." : fail ? "Počet blokujících chyb: " + std::to_string(fail) + ". Oprav je, pak můžeš sestavit hru."
-                                                                            : "Povinné kontroly prošly. Můžeš začít.";
+                                                                            : "Povinné kontroly prošly.";
     text(small, x, CY + CH - 26, conclusion, ACCENT);
     if (button(20, H - 44, 72, 32, "Zpět", !running)) app.page = 0;
-    text(regular, 104, H - 34, "Původní CD zůstane beze změn.", NOTE);
     bool go = !running && !fail && !rows.empty();
-    if (button(W - 150, H - 44, 130, 32, "Sestavit hru", go, true) || (in.enter && go)) start_build();
+    if (button(W - 150, H - 44, 130, 32, "Další", go, true) || (in.enter && go)) start_build();
 }
 
 void list_panel(float x, float y, float w, float h, const std::string& title, const std::vector<std::pair<std::string, std::string>>& rows, const std::string& right_header) {
@@ -1341,7 +1340,7 @@ void stage_view(float x, float y, float w, float h) {
             text(tiny, dst.x + 4, dst.y + 3, std::to_string(revealed) + " / " + std::to_string(strikes), SDL_Color{0, 255, 0, 255});
         }
         fill(fx, fy + fh - 16, fw, 16, NAVY);
-        text(tiny, fx + 6, fy + fh - 14, elide(tiny, app.caption + " / výřez", fw - 12), LIGHT);
+        text(tiny, fx + 6, fy + fh - 14, elide(tiny, app.caption, fw - 12), LIGHT);
         // The mechanic from the player's garage scene; his workpiece is clipped away so he strikes our picture.
         if (smith) {
             size_t frame = size_t(std::fmod(work, beat) / beat * 6) % smith->frames.size();
@@ -1357,10 +1356,9 @@ void stage_view(float x, float y, float w, float h) {
             SDL_SetRenderClipRect(R, nullptr);
         }
         float ix = bx + bw - 190;
-        text(regular, ix, fy + 10, key == "upscale" ? "Zvětšení 3x" : "Remastered", INK);
+        text(regular, ix, fy + 10, key == "upscale" ? "Upscaling 3x" : "Remastered", INK);
         text(title, ix, fy + 32, "640 x 480", ACCENT);
         text(title, ix, fy + 56, "> 1920 x 1440", ACCENT);
-        text(tiny, ix, fy + 86, "Každý zásah vylepší kus obrázku.", ACCENT);
     } else {  // copy scenes: the hero carries pictures from one folder to the other
         static const std::map<std::string, std::pair<const char*, const char*>> ends{{"extract", {"CD", "PRACOVNÍ SLOŽKA"}},
             {"download", {"INTERNET", "PRACOVNÍ SLOŽKA"}}, {"remaster", {"SNÍMKY", "BALÍČKY"}}, {"app", {"BALÍČKY", "HRA"}}};
@@ -1486,7 +1484,6 @@ void cd_player(float x, float y, float w, float h) {
     bool showing_volume = SDL_GetTicks() < app.volume_shown;
     if (!disc) {
         text(bold, tx, ty + 6, "NO DISC", LCD_INK);
-        text(tiny, tx, ty + 26, "hudba bude po načtení CD", LCD_INK);
     } else if (showing_volume) {
         text(bold, tx, ty, "VOL", LCD_INK);
         char v[8];
@@ -1523,7 +1520,7 @@ void cd_player(float x, float y, float w, float h) {
     }
     // Controls.
     float bx = lx + lw + 10;
-    text(tiny, bx, y + 10, "HUDBA Z TVÉHO CD", INK);
+    text(tiny, bx, y + 10, "HUDBA Z HERNÍCH DAT", INK);
     float by = y + 28;
     static bool autoplay = SDL_getenv("HB_TEST_PLAY") != nullptr;  // dev hook (with SDL_AUDIO_DRIVER=dummy)
     if (button(bx, by, 30, 24, "\u25BA", disc) || (autoplay && disc)) { p.play(); autoplay = false; }
@@ -1561,15 +1558,13 @@ void page_build() {
         text(mono, x + w - text_width(mono, run), sy + 66, run, INK);
     }
     fill(x, sy + 86, w, 1, SHADOW);
-    text(tiny, x, sy + 94, "OBRÁZKY Z TVOJÍ HRY", ACCENT);
-    text(small, x + 130, sy + 92, "Za běhu: FLC, vytvořená zvětšení, dešifrované překresby. Do průvodce se nepřibalují.", NOTE);
+    text(tiny, x, sy + 94, "KOPÍROVÁNÍ HERNÍCH DAT", ACCENT);
     cd_player(W - 22 - 470, sy + 112, 470, 72);
     if (app.failed) {
         if (button(20, H - 44, 72, 32, "Zpět")) app.page = 0;
-        text(regular, 104, H - 34, "Hotová část zůstává uložená, další pokus naváže.", NOTE);
         if (button(W - 170, H - 44, 150, 32, "Zkusit znovu", true, true)) start_checks();
     } else {
-        text(regular, 20, H - 34, "Okno můžeš zavřít, hotová část zůstane a příště naváže.", NOTE);
+        text(regular, 20, H - 34, "Při přerušení opětovné spuštění naváže na předchozí práci.", NOTE);
     }
 }
 
@@ -1599,7 +1594,7 @@ void page_done() {
 #else
     if (button(x + 162, py + 78, 170, 28, "Ukázat ve Finderu")) reveal();
 #endif
-    text(small, x, py + 124, "F8: Original / Remastered. Podržením mezerníku ukážeš aktivní místa.", NOTE);
+    text(small, x, py + 124, "F8 / G: Original / Remastered. Podržením mezerníku ukážeš aktivní místa.", NOTE);
     if (app.cleanup) text(small, x, py + 142, "Dočasné soubory odstraněny.", NOTE);
     if (button(W - 120, H - 44, 100, 32, "Zavřít")) { SDL_Event e{}; e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
 }
@@ -1670,10 +1665,19 @@ int run_window(int, char**) {
     if (!app.replaced.empty()) app.update_at = SDL_GetTicks();
     start_update_check();
     find_outdated_games();
+    if (SDL_getenv("HB_DEMO_DETAILS")) {  // dev hook: open the log drawer with sample lines
+        app.details = true;
+        for (auto line : {"Ověřujeme tvoji zálohu", "[detail] Rozpoznaný formát: BIN/CUE, 179181 sektorů", "[detail] HL.EXE sedí, datová stopa odpovídá podporovanému vydání",
+                          "Vybalujeme a ověřujeme obrázky FLC", "[detail] A1-KAME!.FLC: 1 snímků, nově 1, z mezipaměti 0, nových zvětšení 2, atlasy 2 stran (0.1 MB), 1.8 s"})
+            add_log(line);
+    }
     if (const char* test = SDL_getenv("HB_TEST_GAME_DIALOG")) {  // dev hook: "offer" or "running" over a fake game
         app.game_info = GameInfo{fs::u8path("/Users/hrac/Hry/Horke Leto/Horke Leto.app"), "", true};
-        app.game = std::string(test) == "running" ? App::GameUpdate::Running : App::GameUpdate::Offer;
-        app.game_status = "Ponechávám packs";
+        std::string state = test;
+        app.game = state == "running" ? App::GameUpdate::Running : state == "done" ? App::GameUpdate::Done
+                 : state == "failed" ? App::GameUpdate::Failed : App::GameUpdate::Offer;
+        if (state == "failed") app.game_error = "Podepsání hry selhalo.";
+        app.game_status = "Ponechávám herní data";
         app.game_at = SDL_GetTicks();
     }
     if (const char* home = SDL_GetUserFolder(SDL_FOLDER_HOME)) app.output = (fs::u8path(home) / "Games" / "Horke Leto").string();
@@ -1709,6 +1713,7 @@ int run_window(int, char**) {
             app.speed = "9.5 obr./min"; app.eta = "30 min";
             app.recent = {"A1-KAME!.FLC", "A1-KAME@.FLC", "A1-LAVI!.FLC", "A1-LEZE!.FLC"};
             app.picture_at = SDL_GetTicks() + 300;
+            if (SDL_getenv("HB_DEMO_FAILED")) { app.failed = true; app.busy = false; app.error = "Herní soubor chybí nebo nesedí: GFX.GRP"; }
         }
         if (page == 3) {
             app.page = 3; app.result_path = "/Users/hrac/Hry/Horke Leto/Horke Leto.app";

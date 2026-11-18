@@ -50,7 +50,7 @@ void download(const std::string& url, const fs::path& target, const std::string&
             if (percent >= 0 && percent != last) { emit("Download " + std::to_string(percent) + "%"); last = percent; }
         }
     }
-    if (sha_file(partial) != sha256) { fs::remove(partial); throw UserError("Stažený balíček má jiný kontrolní součet; zkus to znovu."); }
+    if (sha_file(partial) != sha256) { fs::remove(partial); throw UserError("Stažený balíček má špatný kontrolní součet; zkus to znovu."); }
     fs::rename(partial, target);
     emit("Download 100%");
 }
