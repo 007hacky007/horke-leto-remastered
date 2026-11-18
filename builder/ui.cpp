@@ -5,6 +5,9 @@
 #include "preflight.h"
 #include "session.h"
 #include "taskbar.h"
+#include "update.h"
+#include <string>
+extern std::string replaced_version;  // main.cpp
 #include <ctime>
 #include <optional>
 #include <SDL3/SDL.h>
@@ -319,6 +322,7 @@ struct App {
     std::chrono::steady_clock::time_point started, stage_started;
     SDL_Texture *picture = nullptr, *result = nullptr, *character = nullptr;
     Uint64 picture_at = 0;
+    SDL_FRect focus{};  // the detail inside the picture texture; the texture itself is only a small surrounding cut-out
     std::string shown;
     std::vector<LogLine> log;
     std::vector<std::string> recent;  // resources finished in the current stage
@@ -334,7 +338,17 @@ struct App {
     Session session;                // the running build, saved for the next start
     Uint64 session_saved = 0;
     bool attention = false;
+    // Self-update: found -> downloading -> starting (quit) or failed.
+    enum class Update { None, Found, Downloading, Starting, Failed } update = Update::None;
+    UpdateInfo update_info;
+    Uint64 update_at = 0;       // when the current update state began (animations)
+    double update_fraction = 0;
+    std::string update_error, replaced;
+    fs::path update_file;
+    bool update_dismissed = false, quit = false;
+    std::thread update_worker;
 } app;
+
 
 // A redraw miniature cropped to its visible content, plus a 12 x 9 colour grid of it.
 App::Thumb thumbnail(const fs::path& path) {
@@ -350,17 +364,55 @@ App::Thumb thumbnail(const fs::path& path) {
     return out;
 }
 
+// A small, busy detail of a frame, so the animations never show a whole scene or character to a new player.
+// Returns {x, y, w, h} of the detail; `context` gets a cut-out twice its size around it for the zoom-in.
+std::array<int, 4> detail_region(const Image& image, std::array<int, 4>& context) {
+    int cw = std::min(image.w, 112), ch = std::min(image.h, 56);
+    std::array<int, 4> best{(image.w - cw) / 2, (image.h - ch) / 2, cw, ch};
+    if (image.w > cw || image.h > ch) {
+        // Score candidate windows by edge energy over opaque pixels; pick randomly among the busiest ones.
+        auto lum = [&](int x, int y) { const uint8_t* p = image.at(x, y); return p[3] < 128 ? -1 : (p[0] * 3 + p[1] * 6 + p[2]) / 10; };
+        std::vector<std::pair<double, std::array<int, 4>>> scored;
+        for (int y = 0; y + ch <= image.h; y += std::max(1, ch / 2))
+            for (int x = 0; x + cw <= image.w; x += std::max(1, cw / 2)) {
+                double energy = 0; int opaque = 0, samples = 0;
+                for (int yy = y; yy < y + ch - 2; yy += 2)
+                    for (int xx = x; xx < x + cw - 2; xx += 2) {
+                        int a = lum(xx, yy), b = lum(xx + 2, yy), c = lum(xx, yy + 2);
+                        ++samples;
+                        if (a < 0) continue;
+                        ++opaque;
+                        if (b >= 0) energy += std::abs(a - b);
+                        if (c >= 0) energy += std::abs(a - c);
+                    }
+                if (samples && opaque * 10 >= samples * 9) scored.push_back({energy, {x, y, cw, ch}});
+            }
+        if (!scored.empty()) {
+            std::sort(scored.begin(), scored.end(), [](auto& a, auto& b) { return a.first > b.first; });
+            static std::mt19937 pick(1998);
+            best = scored[pick() % std::max<size_t>(1, scored.size() / 3)].second;
+        }
+    }
+    int xw = std::min(image.w, cw * 2), xh = std::min(image.h, ch * 2);
+    int xx = std::clamp(best[0] + cw / 2 - xw / 2, 0, image.w - xw), xy = std::clamp(best[1] + ch / 2 - xh / 2, 0, image.h - xh);
+    context = {xx, xy, xw, xh};
+    return best;
+}
+
 void set_picture(const fs::path& source, const fs::path& result = {}) {
     try {
         if (app.picture) SDL_DestroyTexture(app.picture);
         if (app.result) SDL_DestroyTexture(app.result);
+        app.picture = app.result = nullptr;
         auto image = load_png(source, 4);
-        app.picture = texture(image);
-        app.result = nullptr;
+        std::array<int, 4> context;
+        auto detail = detail_region(image, context);
+        app.picture = texture(crop(image, context[0], context[1], context[2], context[3]));
+        app.focus = {float(detail[0] - context[0]), float(detail[1] - context[1]), float(detail[2]), float(detail[3])};
         if (!result.empty() && fs::exists(result)) {
             auto atlas = load_png(result, 4);
-            int w = std::min(image.w * 3, atlas.w - 2), h = std::min(image.h * 3, atlas.h - 2);
-            if (w > 0 && h > 0) app.result = texture(crop(atlas, 2, 2, w, h), true);
+            int w = context[2] * 3, h = context[3] * 3, x = 2 + context[0] * 3, y = 2 + context[1] * 3;
+            if (x + w <= atlas.w && y + h <= atlas.h) app.result = texture(crop(atlas, x, y, w, h), true);
         }
         app.picture_at = SDL_GetTicks();
     } catch (...) { app.picture = app.result = nullptr; }
@@ -747,6 +799,147 @@ void resume_dialog() {
     }
 }
 
+void start_update_download();
+
+void start_update_check() {
+    if (SDL_getenv("HB_DEMO") && !SDL_getenv("HB_UPDATE_API")) return;
+    if (!app.replaced.empty()) return;  // just updated: never chain into another update in the same session
+    app.update_worker = std::thread([] {
+        auto found = check_for_update();
+        if (!found) return;
+        std::lock_guard g(app.lock);
+        app.update_info = *found;
+        app.messages.push_back("[upd-found]");
+    });
+}
+
+void start_update_download() {
+    app.update = App::Update::Downloading;
+    app.update_at = SDL_GetTicks();
+    app.update_fraction = 0;
+    app.update_error.clear();
+    if (app.update_worker.joinable()) app.update_worker.join();
+    app.update_worker = std::thread([info = app.update_info] {
+        auto emit = [](const std::string& line) { std::lock_guard g(app.lock); app.messages.push_back("[upd] " + line); };
+        try {
+            auto file = download_update(info, emit);
+            std::lock_guard g(app.lock);
+            app.messages.push_back("[upd-done] " + file.string());
+        } catch (const std::exception& e) {
+            std::lock_guard g(app.lock);
+            app.messages.push_back(std::string("[upd-error] ") + (cancelled ? "Stahování zrušeno." : e.what()));
+        }
+    });
+}
+
+// Pixel globe that spins: the "internet" end of the download animation.
+void globe(float cx, float cy, float r, double t) {
+    const float px = 2;
+    for (float y = -r; y < r; y += px)
+        for (float x = -r; x < r; x += px) {
+            float d = (x * x + y * y) / (r * r);
+            if (d > 1) continue;
+            // Longitude spins with time; a few blobby continents.
+            double lon = std::asin(std::clamp(x / std::sqrt(std::max(1e-3f, r * r - y * y)), -1.0f, 1.0f)) + t * 1.4;
+            double lat = std::asin(y / r);
+            double land = std::sin(lon * 3) * std::cos(lat * 4) + std::sin(lon * 5 + 1.3) * 0.5;
+            SDL_Color c = land > 0.55 ? SDL_Color{0, 160, 0, 255} : SDL_Color{0, 0, 168, 255};
+            if (d > 0.82 && land <= 0.55) c = SDL_Color{0, 0, 128, 255};
+            fill(cx + x, cy + y, px, px, c);
+        }
+    // Grid lines like the Windows 98 globe icon.
+    for (int k = -1; k <= 1; ++k) line(cx - r * std::sqrt(1 - k * k * 0.25f), cy + k * r / 2, cx + r * std::sqrt(1 - k * k * 0.25f), cy + k * r / 2, SDL_Color{96, 160, 255, 255});
+}
+
+void update_toast() {
+    bool updated = !app.replaced.empty();
+    if (!updated && (app.update != App::Update::Found || app.update_dismissed || app.busy || app.resume)) return;
+    if (updated && SDL_GetTicks() - app.update_at > 7000) { app.replaced.clear(); return; }
+    double t = (SDL_GetTicks() - app.update_at) / 1000.0;
+    float w = 356, h = 52, x = 14;
+    double slide = std::min(1.0, t / 0.35);
+    float y = H - 4 - h * float(1 - (1 - slide) * (1 - slide));
+    fill(x, y, w, h, FACE);
+    bevel(x, y, w, h, false);
+    // The floppy with the new version drops in and bounces.
+    double d = std::clamp((t - 0.25) / 0.9, 0.0, 1.0);
+    double bounce = d < 0.6 ? 1 - (d / 0.6) * (d / 0.6) : std::abs(std::sin((d - 0.6) / 0.4 * 3.14159)) * 0.18 * (1 - d);
+    float iy = y + 10 - float(bounce) * 70;
+    draw(icon(updated ? "check-32" : "floppy-32"), x + 10, iy, 32, 32);
+    if (d >= 1 && !updated)
+        for (int k = 0; k < 4; ++k) {
+            double phase = std::fmod(t * 2.2 + k * 0.37, 1.0);
+            if (phase > 0.5) continue;
+            float sx = x + 6 + float((k * 29) % 40), sy = y + 4 + float((k * 17) % 34), a = float(phase * 6);
+            SDL_Color star{255, 236, 64, 255};
+            line(sx - a, sy, sx + a, sy, star); line(sx, sy - a, sx, sy + a, star);
+        }
+    if (updated) {
+        text(bold, x + 52, y + 9, std::string("Aktualizováno na verzi ") + builder_version(), INK);
+        text(small, x + 52, y + 28, "Předtím " + app.replaced + ". Teď už to můžeš pokazit novější verzí.", NOTE);
+        return;
+    }
+    text(bold, x + 52, y + 9, "Nová verze " + app.update_info.version + "!", INK);
+    text(small, x + 52, y + 28, std::string("Máš ") + builder_version() + ". Stáhne se a spustí sama.", NOTE);
+    if (button(x + w - 110, y + 12, 100, 26, "Aktualizovat", true, true)) start_update_download();
+    if (inside(x + w - 18, y + 2, 16, 12) && in.released) app.update_dismissed = true;
+    text(tiny, x + w - 14, y + 2, "x", NOTE);
+}
+
+// Windows 98 style download dialog: pages fly from the spinning globe into the folder.
+void update_dialog() {
+    double t = (SDL_GetTicks() - app.update_at) / 1000.0;
+    float w = 540, h = 268, x = (W - w) / 2, y = CY + (CH - h) / 2;
+    fill(x + 4, y + 4, w, h, SDL_Color{0, 0, 0, 90});
+    fill(x, y, w, h, FACE);
+    bevel(x, y, w, h, false);
+    title_bar(x + 3, y + 3, w - 6, 22, "Aktualizace průvodce", icon("floppy-16"));
+    float gx = x + 70, fx = x + w - 110, ay = y + 82;
+    globe(gx, ay, 26, SDL_GetTicks() / 1000.0);
+    text(tiny, gx - text_width(tiny, "GITHUB") / 2, ay + 32, "GITHUB", INK);
+#ifdef _WIN32
+    const char* into = "SLOŽKA PRŮVODCE";
+#else
+    const char* into = "STAŽENÉ SOUBORY";
+#endif
+    draw(icon("folder-32"), fx - 20, ay - 20, 40, 40);
+    text(tiny, fx - text_width(tiny, into) / 2, ay + 32, into, INK);
+    bool moving = app.update == App::Update::Downloading;
+    if (moving)
+        for (int k = 0; k < 3; ++k) {
+            double p = std::fmod(t * 0.9 + k / 3.0, 1.0);
+            float px = gx + 30 + float(p) * (fx - gx - 60), py = ay - 8 - float(std::sin(p * 3.14159) * 34);
+            draw(icon("document-16"), px - 8, py - 8, 16, 16, p * 40 - 20);
+        }
+    float ty = y + 140;
+    char line_text[160];
+    if (app.update == App::Update::Failed) {
+        text(bold, x + 20, ty, "Aktualizace se nepovedla.", FAILC);
+        text(regular, x + 20, ty + 22, elide(regular, app.update_error, w - 40), NOTE);
+    } else if (app.update == App::Update::Starting) {
+        text(bold, x + 20, ty, "Staženo a ověřeno. Spouštím verzi " + app.update_info.version + "...", INK);
+        text(regular, x + 20, ty + 22, "Tohle okno se za chvilku zavře samo.", NOTE);
+    } else {
+        double mb = app.update_info.bytes / 1048576.0;
+        std::snprintf(line_text, sizeof line_text, "Stahuji verzi %s: %.1f MB z %.1f MB", app.update_info.version.c_str(), mb * app.update_fraction, mb);
+        text(bold, x + 20, ty, line_text, INK);
+        text(regular, x + 20, ty + 22, "Kontrolní součet ověříme, než ji spustíme.", NOTE);
+    }
+    segments(x + 20, ty + 46, w - 40, 20, app.update == App::Update::Starting ? 1.0 : app.update_fraction, -1);
+    float by = y + h - 42;
+    if (app.update == App::Update::Downloading) {
+        if (button(x + w - 130, by, 110, 28, "Zrušit")) cancelled = true;
+    } else if (app.update == App::Update::Failed) {
+        if (button(x + w - 130, by, 110, 28, "Zavřít")) { app.update = App::Update::Found; app.update_dismissed = true; }
+        if (button(x + w - 280, by, 140, 28, "Zkusit znovu", true, true)) start_update_download();
+    } else if (app.update == App::Update::Starting && t > 0.8) {
+        try {
+            apply_update(app.update_file);
+            app.quit = true;
+        } catch (const std::exception& e) { app.update_error = e.what(); app.update = App::Update::Failed; }
+    }
+}
+
 void page_checks() {
     std::vector<Check> rows;
     bool running;
@@ -865,13 +1058,15 @@ float draw_anim(Anim& a, double time, float cx, float ground, float scale) {
 void shadowed(SDL_Texture* picture, float x, float y, float w, float h) {
     float tw, th;
     SDL_GetTextureSize(picture, &tw, &th);
+    const SDL_FRect* part = picture == app.picture && app.focus.w > 0 ? &app.focus : nullptr;
+    if (part) { tw = part->w; th = part->h; }
     float s = std::min(w / tw, h / th), dw = tw * s, dh = th * s;
     SDL_FRect shade{x + (w - dw) / 2 + 3, y + (h - dh) / 2 + 3, dw, dh};
     SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(R, 0, 0, 0, 70);
     SDL_RenderFillRect(R, &shade);
     SDL_FRect dst{x + (w - dw) / 2, y + (h - dh) / 2, dw, dh};
-    SDL_RenderTexture(R, picture, nullptr, &dst);
+    SDL_RenderTexture(R, picture, part, &dst);
 }
 
 float app_right_edge = 0;
@@ -961,7 +1156,8 @@ void stage_view(float x, float y, float w, float h) {
         double fps = smith ? smith->fps : 6;
         double beat = 6 / fps;
         double since = (SDL_GetTicks() - app.picture_at) / 1000.0;
-        int hits = int(since / beat);
+        double work = std::max(0.0, since - 0.45);  // the hammer starts once the zoom has landed
+        int hits = int(work / beat);
         if (hits > strikes + 1 && !app.next_source.empty()) {  // sequence done: take the newest finished frame
             set_picture(app.next_source, app.next_result);
             app.next_source.clear();
@@ -975,8 +1171,10 @@ void stage_view(float x, float y, float w, float h) {
         if (app.picture) {
             float tw, th;
             SDL_GetTextureSize(app.picture, &tw, &th);
-            float zoom = std::min(tw, th) >= 160 ? 0.5f : 1.0f;
-            SDL_FRect src{tw * (1 - zoom) / 2, th * (1 - zoom) / 2, tw * zoom, th * zoom};
+            // Quick zoom from the small cut-out into its detail, then only the detail is worked on.
+            double zt = std::clamp(since / 0.45, 0.0, 1.0);
+            float e = float(1 - (1 - zt) * (1 - zt) * (1 - zt));
+            SDL_FRect src{app.focus.x * e, app.focus.y * e, tw + (app.focus.w - tw) * e, th + (app.focus.h - th) * e};
             float s = std::min(fw / src.w, (fh - 16) / src.h);
             SDL_FRect dst{fx + (fw - src.w * s) / 2, fy + (fh - 16 - src.h * s) / 2, src.w * s, src.h * s};
             SDL_RenderTexture(R, app.picture, &src, &dst);
@@ -993,7 +1191,7 @@ void stage_view(float x, float y, float w, float h) {
             app_right_edge = right_edge;
             if (revealed < strikes) line(dst.x, dst.y + done_h, dst.x + dst.w, dst.y + done_h, SDL_Color{0, 255, 0, 255});
             // Chips fly off the right edge just after each strike.
-            double after = std::fmod(since, beat) / beat;
+            double after = std::fmod(work, beat) / beat;
             if (hits > 0 && hits <= strikes && after < 0.45) {
                 std::mt19937 chips(unsigned(hits * 97));
                 for (int k = 0; k < 9; ++k) {
@@ -1008,7 +1206,7 @@ void stage_view(float x, float y, float w, float h) {
         text(tiny, fx + 6, fy + fh - 14, elide(tiny, app.caption + " / výřez", fw - 12), LIGHT);
         // The mechanic from the player's garage scene; his workpiece is clipped away so he strikes our picture.
         if (smith) {
-            size_t frame = size_t(std::fmod(since, beat) / beat * 6) % smith->frames.size();
+            size_t frame = size_t(std::fmod(work, beat) / beat * 6) % smith->frames.size();
             float tw, th;
             SDL_GetTextureSize(smith->frames[frame], &tw, &th);
             float x0 = app_right_edge - 46, y0 = impact_y - 54;  // hammer face lands at local (46, 54)
@@ -1169,6 +1367,14 @@ void pump_messages() {
         else { app.archive = path; start_checks(); }
     }
     for (auto& line : lines) {
+        if (line.rfind("[upd-found]", 0) == 0) {
+            app.update = App::Update::Found; app.update_at = SDL_GetTicks();
+            if (SDL_getenv("HB_TEST_UPDATE_GO")) start_update_download();  // dev hook
+            continue;
+        }
+        if (line.rfind("[upd] Download ", 0) == 0) { app.update_fraction = std::atoi(line.c_str() + 15) / 100.0; continue; }
+        if (line.rfind("[upd-done] ", 0) == 0) { app.update_file = fs::u8path(line.substr(11)); app.update = App::Update::Starting; app.update_at = SDL_GetTicks(); continue; }
+        if (line.rfind("[upd-error] ", 0) == 0) { app.update_error = line.substr(12); app.update = App::Update::Failed; cancelled = false; continue; }
         if (line.rfind("[result] ", 0) == 0) { clear_session(); app.busy = false; app.result_path = fs::u8path(line.substr(9)); if (!app.character) set_stage(6); app.page = 3; }
         else if (line.rfind("[error] ", 0) == 0) { remember_session(true); app.busy = false; app.failed = true; app.error = line.substr(8); add_log("CHYBA: " + app.error); app.details = true; }
         else handle(line);
@@ -1203,6 +1409,9 @@ int run_window(int, char**) {
     }
     app.drives = optical_drives();
     if (!SDL_getenv("HB_DEMO")) app.resume = load_session();
+    app.replaced = replaced_version;
+    if (!app.replaced.empty()) app.update_at = SDL_GetTicks();
+    start_update_check();
     if (const char* home = SDL_GetUserFolder(SDL_FOLDER_HOME)) app.output = (fs::u8path(home) / "Games" / "Horke Leto").string();
     // Developer/README screenshots: HB_DEMO="page stage" with HB_DEMO_WORK pointing at a .builder folder.
     if (const char* demo = SDL_getenv("HB_DEMO")) {
@@ -1280,21 +1489,24 @@ int run_window(int, char**) {
         watch_extract();
         fill(0, 0, W, H, FACE);
         chrome();
+        bool updating = app.update == App::Update::Downloading || app.update == App::Update::Starting || app.update == App::Update::Failed;
+        bool resuming = app.page == 0 && app.resume && !app.details;
+        Input real = in;
+        if (updating || resuming) { in.pressed = in.released = in.enter = false; in.wheel = 0; in.x = in.y = -1000; }  // the page behind is inert
         if (app.details) log_drawer();
         else switch (app.page) {
-        case 0:
-            if (app.resume) {
-                Input real = in;
-                in.pressed = in.released = in.enter = false; in.wheel = 0; in.x = in.y = -1000;  // the page behind is inert
-                page_source();
-                in = real;
-                resume_dialog();
-            } else page_source();
-            break;
+        case 0: page_source(); break;
         case 1: page_checks(); break;
         case 2: page_build(); break;
         default: page_done(); break;
         }
+        in = real;
+        if (updating) update_dialog();
+        else {
+            if (resuming) resume_dialog();
+            if (app.page == 0 || app.page == 3) update_toast();
+        }
+        if (app.quit) running = false;
         const char* shot = SDL_getenv("HB_SCREENSHOT");
         const char* wait = SDL_getenv("HB_SCREENSHOT_MS");
         bool settled = !app.checking && SDL_GetTicks() - opened > Uint64(wait ? std::atoi(wait) : 1500);
@@ -1305,6 +1517,7 @@ int run_window(int, char**) {
         SDL_RenderPresent(R);
     }
     if (app.worker.joinable()) app.worker.detach();
+    if (app.update_worker.joinable()) app.update_worker.detach();
     SDL_Quit();
     return 0;
 }

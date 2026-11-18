@@ -1,10 +1,11 @@
 // HTTPS download through the system's NSURLSession (no bundled TLS library).
 #include "pipeline.h"
 #import <Foundation/Foundation.h>
+#include <dlfcn.h>
 #include <thread>
 
 namespace hb {
-void download(const std::string& url, const fs::path& target, const std::string& sha256, const Emit& emit) {
+void download(const std::string& url, const fs::path& target, const std::string& sha256, const Emit& emit, const std::string& message) {
     if (fs::is_regular_file(target) && sha_file(target) == sha256) { emit("Download 100%"); return; }
     fs::create_directories(target.parent_path());
     __block NSError* failure = nil;
@@ -34,12 +35,49 @@ void download(const std::string& url, const fs::path& target, const std::string&
         }
     }
     check_cancelled();
-    if (failure || !saved || status != 200)
-        throw UserError("Výtvarný balíček nejde stáhnout. Zkontroluj připojení, nebo vyber stažený archiv.");
+    if (failure || !saved || (status != 200 && !address.isFileURL)) throw UserError(message);
     fs::path partial = target.string() + ".partial";
     if (sha_file(partial) != sha256) { fs::remove(partial); throw UserError("Stažený balíček má jiný kontrolní součet; zkus to znovu."); }
     fs::rename(partial, target);
     emit("Download 100%");
+}
+
+std::string http_get(const std::string& url) {
+    NSURL* address = [NSURL URLWithString:[NSString stringWithUTF8String:url.c_str()]];
+    if (!address) throw UserError("Neplatná adresa: " + url);
+    NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:address];
+    request.timeoutInterval = 15;
+    [request setValue:@"HorkeLetoBuilder" forHTTPHeaderField:@"User-Agent"];
+    [request setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+    __block long status = 0;
+    __block NSData* body = nil;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
+        if (!error) { body = data; status = [response isKindOfClass:[NSHTTPURLResponse class]] ? [(NSHTTPURLResponse*)response statusCode] : 200; }
+        dispatch_semaphore_signal(done);
+    }] resume];
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC)) || !body || status != 200)
+        throw UserError("Server neodpověděl.");
+    return std::string(static_cast<const char*>(body.bytes), body.length);
+}
+
+fs::path original_bundle_path(const fs::path& bundle) {
+    // Security.framework's translocation calls are not in the public headers; look them up at run time.
+    using IsTranslocated = Boolean (*)(CFURLRef, bool*, CFErrorRef*);
+    using OriginalPath = CFURLRef (*)(CFURLRef, CFErrorRef*);
+    void* security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY);
+    if (!security) return bundle;
+    auto is_translocated = reinterpret_cast<IsTranslocated>(dlsym(security, "SecTranslocateIsTranslocatedURL"));
+    auto original = reinterpret_cast<OriginalPath>(dlsym(security, "SecTranslocateCreateOriginalPathForURL"));
+    if (!is_translocated || !original) return bundle;
+    NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:bundle.string().c_str()]];
+    bool translocated = false;
+    if (!is_translocated((__bridge CFURLRef)url, &translocated, nullptr) || !translocated) return bundle;
+    CFURLRef real = original((__bridge CFURLRef)url, nullptr);
+    if (!real) return bundle;
+    fs::path out = [[(__bridge NSURL*)real path] UTF8String];
+    CFRelease(real);
+    return out;
 }
 
 uint64_t available_bytes(const fs::path& path) {

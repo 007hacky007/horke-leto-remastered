@@ -17,7 +17,12 @@ const char* app_name();                 // "Horke Leto.app" or "HorkeLeto"
 fs::path build_game(const BuildRequest& request, const Emit& emit);
 
 // Downloads with SHA-256 verification; progress lines "Download N%".
-void download(const std::string& url, const fs::path& target, const std::string& sha256, const Emit& emit);
+void download(const std::string& url, const fs::path& target, const std::string& sha256, const Emit& emit,
+              const std::string& failure = "Výtvarný balíček nejde stáhnout. Zkontroluj připojení, nebo vyber stažený archiv.");
+// GET into memory (GitHub API, checksum files). Throws UserError on failure or a non-200 answer.
+std::string http_get(const std::string& url);
+// macOS: where a Gatekeeper-translocated app really lives (its disk image); the input elsewhere.
+fs::path original_bundle_path(const fs::path& bundle);
 // Free bytes for new files, including what the OS can purge on demand (macOS snapshots).
 uint64_t available_bytes(const fs::path& path);
 // True when a HEAD request to the URL answers 200 (after redirects).

@@ -1,6 +1,8 @@
 #include "original.h"
 #include "data/hash.h"
 #include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -139,6 +141,7 @@ struct Original {
 
     void infer(const std::map<std::string, std::array<int, 2>>& jobs, const std::string& label) const {
         if (jobs.empty()) return;
+        auto began = std::chrono::steady_clock::now();
         auto staging = p.cache / "batch";
         remove_tree(staging);
         fs::create_directories(staging / "in");
@@ -161,6 +164,10 @@ struct Original {
                 {"input", artifact(model_folder(key) / (key + ".input.png"))}, {"output", artifact(target)}, {"size", {size[0], size[1]}}});
         }
         remove_tree(staging);
+        double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
+        char line[200];
+        std::snprintf(line, sizeof line, "[detail]     Real-ESRGAN %s: %zu obrázků za %.1f s (%.2f s/obrázek)", label.c_str(), jobs.size(), seconds, seconds / jobs.size());
+        p.log(line);
     }
 
     Image raw(const std::string& key, int w, int h) const {
@@ -486,6 +493,7 @@ void build_palette_variants(const OriginalPaths& paths, const Upscaler& upscaler
         if (palette.size() != 256 || identity != spec.at("palette_sha256").get<std::string>())
             throw UserError("Paleta pro barevnou variantu nesedí: " + source);
         o.build_variant(spec, manifest_of(name), palette, identity);
+        paths.log("[detail] " + name + " v paletě " + source + " (" + identity.substr(0, 8) + "): " + spec.at("usages").dump());
         update_variant_catalog(paths.out, identity, name);
         progress(++done, total, name);
     }
@@ -506,6 +514,8 @@ void build_original(const OriginalPaths& paths, const Upscaler& upscaler, const 
             throw UserError("Vybalená data nesedí: " + name);
         std::vector<json> pending;
         for (auto& f : manifest.at("frames")) if (!o.reusable_frame(resource, f)) pending.push_back(f);
+        auto began = std::chrono::steady_clock::now();
+        size_t new_jobs = 0;
         for (size_t start = 0; start < pending.size(); start += 64) {
             size_t end = std::min(pending.size(), start + 64);
             std::map<std::string, std::array<int, 2>> jobs;
@@ -521,10 +531,21 @@ void build_original(const OriginalPaths& paths, const Upscaler& upscaler, const 
                     keys[i][1] = o.prepare(extend_rgb(o.palette_rgb(frame.indices.px, frame.indices.w, frame.indices.h, frame), mask), jobs, lock);
                 }
             });
+            new_jobs += jobs.size();
             o.infer(jobs, name + "-" + std::to_string(start));
             parallel(end - start, 4, [&](size_t i) { o.render(resource, pending[start + i], keys[i][0], keys[i][1]); });
         }
-        if (!pending.empty() || !o.reusable_atlases(resource)) o.build_atlases(resource, manifest);
+        size_t frames = manifest.at("frames").size();
+        if (!pending.empty() || !o.reusable_atlases(resource)) {
+            auto index = o.build_atlases(resource, manifest);
+            uint64_t bytes = 0;
+            for (auto& a : index.at("atlases")) bytes += a.value("bytes", uint64_t(0));
+            char line[300];
+            std::snprintf(line, sizeof line, "[detail] %s: %zu snímků, nově %zu, z mezipaměti %zu, nových zvětšení %zu, atlasy %zu stran (%.1f MB), %.1f s",
+                          name.c_str(), frames, pending.size(), frames - pending.size(), new_jobs, index.at("atlases").size(), bytes / 1048576.0,
+                          std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count());
+            paths.log(line);
+        } else paths.log("[detail] " + name + ": hotovo dříve (" + std::to_string(frames) + " snímků, ověřeno)");
         progress(++done, total, name);
     }
     if (selected_resource("font")) o.build_fonts();

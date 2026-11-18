@@ -25,7 +25,7 @@ jobs:
           python tools/distribution/fetch.py --platform macos
       - name: Build and test (arm64)
         run: |
-          cmake --preset macos-release
+          cmake --preset macos-release -DHB_VERSION="${{ github.ref_type == 'tag' && github.ref_name || '0.0.0' }}"
           cmake --build --preset macos-release
           ctest --test-dir build/macos-release --output-on-failure
       - name: Package the disk image
@@ -54,7 +54,7 @@ jobs:
           python tools/distribution/fetch.py --platform windows --toolchain
       - name: Cross-build x64
         run: |
-          cmake --preset windows-release
+          cmake --preset windows-release -DHB_VERSION="${{ github.ref_type == 'tag' && github.ref_name || '0.0.0' }}"
           cmake --build --preset windows-release
       - name: Package the executable
         run: |

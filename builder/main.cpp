@@ -1,5 +1,6 @@
 // Horke Leto Remastered builder. Without arguments it opens the window; --cli runs headless.
 #include "pipeline.h"
+#include "update.h"
 #include <SDL3/SDL_main.h>
 #include <cstdio>
 #include <cstring>
@@ -8,6 +9,7 @@
 #endif
 
 int run_window(int argc, char** argv);
+std::string replaced_version;  // set when this builder was started by an older one updating itself
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
@@ -33,7 +35,11 @@ int main(int argc, char** argv) {
         else if (a == "--art-archive") request.art_archive = hb::fs::u8path(next());
         else if (a == "--keep-temporary") request.cleanup = false;
     }
-    if (!cli) return run_window(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "--version") { std::printf("%s\n", hb::builder_version()); return 0; }
+    if (!cli) {
+        replaced_version = hb::finish_update(argc, argv);
+        return run_window(argc, argv);
+    }
     try {
         auto result = hb::build_game(request, [](const std::string& line) { std::printf("%s\n", line.c_str()); std::fflush(stdout); });
         std::printf("OK %s\n", result.string().c_str());

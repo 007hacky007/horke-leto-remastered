@@ -1,6 +1,8 @@
 // The Remastered pack: decrypted redraws for statics, colour-graded Original upscales for animations.
 #include "remastered.h"
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -157,7 +159,8 @@ void build_resource(const Context& c, const std::string& name) {
     fs::create_directories(folder);
     std::string key = sha_file(original_index) + c.base_key;
     Checkpoint checkpoint(folder / ".complete.json", key);
-    if (checkpoint.valid()) return;
+    if (checkpoint.valid()) { c.p.log("[detail] " + name + ": hotovo dříve, ověřeno"); return; }
+    auto began = std::chrono::steady_clock::now();
     auto result = read_json(original_index);
     result["mode"] = "Remastered";
     result["atlases"] = json::array();
@@ -216,6 +219,20 @@ void build_resource(const Context& c, const std::string& name) {
         }
     }
     write_json(folder / "index.json", result);
+    {
+        auto statics = c.manifest.at("statics");
+        bool redraw = statics.contains(name) && statics.at(name).contains("file");
+        std::string method = redraw ? "překresba " + statics.at(name).at("file").get<std::string>()
+                           : animation ? "animace, barevná korekce" + std::string(c.manifest.at("animations").at(name).contains("background") ? " + vyměněné pozadí" : "")
+                                       : "zvětšený originál";
+        uint64_t bytes = 0;
+        for (auto& a : result.at("atlases")) bytes += a.value("bytes", uint64_t(0));
+        char line[400];
+        std::snprintf(line, sizeof line, "[detail] %s: %s, %zu snímků, atlasy %zu stran (%.1f MB), %.1f s", name.c_str(), method.c_str(),
+                      result.at("frames").size(), result.at("atlases").size(), bytes / 1048576.0,
+                      std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count());
+        c.p.log(line);
+    }
     std::vector<fs::path> files{folder / "index.json"};
     for (auto& a : result.at("atlases")) files.push_back(folder / a.at("path").get<std::string>());
     checkpoint.commit(files);

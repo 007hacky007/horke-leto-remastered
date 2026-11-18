@@ -3,6 +3,7 @@
 #include "disc.h"
 #include "remastered.h"
 #include "zip.h"
+#include <cstdio>
 #include <cstring>
 #include <map>
 
@@ -135,6 +136,12 @@ static void decrypt_art(const fs::path& archive, const fs::path& grp_path, const
         }
         if (sha_bytes(plain) != row.at("sha256").get<std::string>()) throw UserError("Překresba nesedí s kontrolním součtem: " + name);
         write_file(stage / relative, plain.data(), plain.size());
+        {
+            char line[300];
+            std::snprintf(line, sizeof line, "[detail] %s -> %s: %.1f kB, klíč z GFX.GRP (%u B), XChaCha20-Poly1305 ověřeno", name.c_str(),
+                          relative.filename().string().c_str(), plain.size() / 1024.0, unsigned(members.at(name).second));
+            emit(line);
+        }
         emit("[progress] decrypt " + std::to_string(done) + " " + std::to_string(total) + " " + (stage / relative).string());
     }
     write_json(stage / "manifest.json", recipes);
@@ -199,6 +206,13 @@ static fs::path assemble(const fs::path& tools, const fs::path& work, const fs::
     move_or_copy(work / "data", resources / "data", move);
     move_or_copy(work / "packs", resources / "packs", move);
     normalize_runtime(resources / "packs" / "remastered");
+    for (auto part : {"data", "packs/original", "packs/remastered"}) {
+        uint64_t bytes = 0; size_t count = 0;
+        for (auto& f : files_under(resources / part)) { bytes += fs::file_size(f); ++count; }
+        char line[200];
+        std::snprintf(line, sizeof line, "[detail] %s: %zu souborů, %.1f MB", part, count, bytes / 1048576.0);
+        emit(line);
+    }
     write_json(resources / "launch.json", {{"schema_version", 1}, {"data", "data"}, {"packs", "packs"}});
     try {
         make_game_icon(work, stage);
@@ -256,6 +270,23 @@ fs::path build_game(const BuildRequest& req, const Emit& emit) {
         imported.commit(files_under(work / "data"));
     }
     verify_data(work / "data", pins, strict_audio);
+    for (auto& [name, expected] : pins.at("files").items()) {
+        char line[300];
+        std::snprintf(line, sizeof line, "[detail] %s: %.2f MB, SHA-256 %s... sedí", name.c_str(), fs::file_size(work / "data" / name) / 1048576.0,
+                      expected.get<std::string>().substr(0, 12).c_str());
+        emit(line);
+    }
+    try {
+        auto audio = read_json(work / "data" / "audio" / "manifest.json");
+        for (auto& t : audio.at("tracks")) {
+            if (t.value("pregap", false)) continue;
+            auto file = work / "data" / "audio" / t.at("path").get<std::string>();
+            char line[300];
+            std::snprintf(line, sizeof line, "[detail] Hudba, stopa %d: %s, FLAC %.1f MB", t.at("track").get<int>(),
+                          t.at("path").get<std::string>().c_str(), fs::exists(file) ? fs::file_size(file) / 1048576.0 : 0.0);
+            emit(line);
+        }
+    } catch (...) {}
 
     emit("[stage] extract");
     emit("Vybalujeme a ověřujeme obrázky FLC");
@@ -270,6 +301,17 @@ fs::path build_game(const BuildRequest& req, const Emit& emit) {
         files.insert(files.end(), font.begin(), font.end());
         exported.commit(files);
     }
+
+    try {
+        auto resources = read_json(work / "frames" / "index.json").at("resources");
+        int frames = 0;
+        for (auto& r : resources) {
+            frames += r.at("frames").get<int>();
+            emit("[detail] " + r.at("name").get<std::string>() + ": " + std::to_string(r.at("frames").get<int>()) + " snímků, zdroj " +
+                 r.at("source_sha256").get<std::string>().substr(0, 12) + "...");
+        }
+        emit("[detail] Celkem " + std::to_string(resources.size()) + " obrázků a animací, " + std::to_string(frames) + " snímků");
+    } catch (...) {}
 
     emit("[stage] download");
     emit("Stahujeme šifrované překresby a ověřujeme SHA-256");
@@ -286,6 +328,12 @@ fs::path build_game(const BuildRequest& req, const Emit& emit) {
 
     emit("[stage] decrypt");
     emit("Odemykáme překresby klíči z tvého CD");
+    {
+        char line[200];
+        std::snprintf(line, sizeof line, "[detail] Balíček %s: %.1f MB, SHA-256 %s... sedí", art.at("version").get<std::string>().c_str(),
+                      fs::file_size(art_zip) / 1048576.0, art.at("sha256").get<std::string>().substr(0, 12).c_str());
+        emit(line);
+    }
     decrypt_art(art_zip, work / "data" / "GFX.GRP", work / "art-decrypted", emit);
 
     emit("[stage] upscale");
@@ -306,17 +354,17 @@ fs::path build_game(const BuildRequest& req, const Emit& emit) {
     if (!WINDOWS) fs::permissions(upscaler.runner, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec);
     auto resources = read_json(work / "frames" / "index.json").at("resources");
     std::sort(resources.begin(), resources.end(), [](const json& a, const json& b) { return a.at("name") < b.at("name"); });
-    build_original({work / "frames", work / "cache", work / "packs" / "original", work / "evidence"}, upscaler, resources,
+    build_original({work / "frames", work / "cache", work / "packs" / "original", work / "evidence", emit}, upscaler, resources,
         [&](int done, int total, const std::string& name) { emit("[progress] upscale " + std::to_string(done) + " " + std::to_string(total) + " " + name); });
     emit("[detail] Barevné varianty pro jiné palety (menu, inventář, noc)");
-    build_palette_variants({work / "frames", work / "cache", work / "packs" / "original", work / "evidence"}, upscaler, resources,
+    build_palette_variants({work / "frames", work / "cache", work / "packs" / "original", work / "evidence", emit}, upscaler, resources,
         pins.at("palette_variants"), [&](int done, int total, const std::string& name) {
             emit("[detail] Varianta " + std::to_string(done) + "/" + std::to_string(total) + ": " + name); });
 
     emit("[stage] remaster");
-    build_remastered({work / "frames", work / "art-decrypted", work / "packs" / "original", work / "packs" / "remastered", work / "cache"}, upscaler,
+    build_remastered({work / "frames", work / "art-decrypted", work / "packs" / "original", work / "packs" / "remastered", work / "cache", emit}, upscaler,
         [&](int done, int total, const std::string& name) { emit("[progress] remaster " + std::to_string(done) + " " + std::to_string(total) + " " + name); });
-    build_remastered_variants({work / "frames", work / "art-decrypted", work / "packs" / "original", work / "packs" / "remastered", work / "cache"},
+    build_remastered_variants({work / "frames", work / "art-decrypted", work / "packs" / "original", work / "packs" / "remastered", work / "cache", emit},
         pins.at("palette_variants"));
 
     emit("[stage] app");

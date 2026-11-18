@@ -9,7 +9,7 @@ struct Upscaler {
     json model;                // pins["model"]
 };
 
-struct OriginalPaths { fs::path source, cache, out, evidence; };
+struct OriginalPaths { fs::path source, cache, out, evidence; Emit log = [](const std::string&) {}; };  // log: "[detail] ..." lines
 
 constexpr int SCALE = 3, PAD = 16;
 std::pair<std::vector<std::array<int, 2>>, std::vector<std::array<int, 5>>> atlas_layout(const std::vector<std::array<int, 2>>& sizes);
