@@ -1,11 +1,15 @@
 #pragma once
 #include "data/result.h"
-#include <nlohmann/json.hpp>
 #include <filesystem>
 #include "world/inventory.h"
+#include <array>
 #include <map>
+#include <span>
+#include <vector>
 namespace hl {
-struct DosSceneState {bool visited{};std::string region;std::map<std::string,int16_t> members;};
+// One visited screen as DOS 0x2c19a records it when the screen is left or saved.
+struct DosSceneState {bool visited{};std::string region;std::map<std::string,int16_t> members;
+ std::string entered_from,cursor;int32_t screen{},x{},y{},direction{},actor_visible{};std::array<std::array<uint8_t,3>,256> palette{};};
 struct DosSaveState {
  std::string scene,character_file;int x{},y{},direction{},movement_depth{};bool character_visible{};
  std::map<std::string,int32_t> globals,integers;
@@ -15,7 +19,10 @@ struct DosSaveState {
  std::array<std::array<uint8_t,3>,256> palette{};
 };
 Result<DosSaveState> parse_dos_save(ByteView);
-struct SaveState {std::string data_identity;nlohmann::json reconstruction;};
-Result<void> save_game(const SaveState&,const std::filesystem::path&);
-Result<SaveState> load_game(const std::filesystem::path&,std::string_view identity);
+Result<std::vector<std::byte>> write_dos_save(const DosSaveState&);
+// Slot files follow the original: SAVE.<slot> plus ten 51-byte names in SAVNAMES.TXT.
+std::filesystem::path dos_save_path(const std::filesystem::path& directory,int slot);
+Result<void> write_file_atomic(const std::filesystem::path&,std::span<const std::byte>);
+std::array<std::vector<uint8_t>,10> read_save_names(const std::filesystem::path& directory);
+Result<void> write_save_names(const std::filesystem::path& directory,const std::array<std::vector<uint8_t>,10>& names);
 }

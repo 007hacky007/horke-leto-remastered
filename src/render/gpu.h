@@ -13,6 +13,9 @@ class Renderer {
  std::unique_ptr<Preload> preload_;
  SDL_Renderer* renderer_{};SDL_Texture* canvas_{};SDL_Texture* processed_{};std::string gpu_failure_,adapter_;
  TextureCache<SDL_Texture> cache_{256*1024*1024};
+ // Brightness/contrast: a fragment shader on GPU renderers, a CPU pass on the software renderer.
+ SDL_GPUShader* adjust_shader_{};SDL_GPURenderState* adjust_state_{};SDL_Texture* adjust_cpu_{};bool adjust_shader_failed_{};
+ Result<bool> adjust_state(const PalettePostprocess&);bool adjust_self_test();Result<void> adjust_on_cpu(const PalettePostprocess&);
  std::vector<std::shared_ptr<SDL_Texture>> in_flight_;
  Renderer();
  void release();Result<void> targets();

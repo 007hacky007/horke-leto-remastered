@@ -1,27 +1,19 @@
-Already have the game from 1.0.0? Start the new builder: it finds your game and
-offers *Aktualizovat hru*. Saved games stay, and it takes about 15 minutes on a
-Mac because it adds pictures the first version left out.
+Already have the game? Start the new builder: it finds your game and offers
+*Aktualizovat hru*. This update only replaces the game engine and takes a minute.
+
+**Saved games from 1.0.0 and 1.0.1 do not load in this version.** Games are now
+saved in the original game's own format instead of a replay of every click, so
+a save stays small, loads instantly and no longer breaks when the game is
+updated. The DOS version of Horké léto can load these saves too.
 
 **In the game**
-- **I** or **Tab** opens the inventory, and a small bag in the top-left corner
-  does the same (it can be hidden in the options).
-- Chapters 4 and 5 no longer stop with "missing usage or palette variant";
-  180 missing upscaled pictures are now made by the builder.
-- Remastered mode now shows the redrawn scenes in rooms with a different
-  palette, where it fell back to the Original look.
-- Voices start together with their subtitles, and the balance of sound
-  effects, speech and music matches the original game.
-- Saving into an empty slot starts with an empty name line.
-- Window size, scaling and fullscreen options, in Czech, under **O** or in the
-  game's own *výběr* screen. **H** shows the keys.
-
-**In the builder**
-- Continues an interrupted build, shows progress on the app icon and checks
-  for new versions.
-- Updates games built by an older version in place.
-
-The game needs about 17 GB once built (the README said 9 GB, which was
-wrong) and about 45 GB free while building.
+- Saving no longer crashes the game afterwards.
+- **F2** and **F3** open the save and load screens, as in the original.
+- The blinking cursor is back when you type a name for a saved game.
+- The *výběr* screen setting for subtitles and voice now works: voice only,
+  subtitles only, or both. Like the original, a new game starts with voice only.
+- The brightness and contrast sliders on the *výběr* screen now change the
+  picture, in both the original and the redrawn graphics.
 
 - **Horke-Leto-Builder-macOS.dmg**: open it and follow the picture in the window.
 - **Horke-Leto-Builder-Windows.exe**: if SmartScreen warns you, choose

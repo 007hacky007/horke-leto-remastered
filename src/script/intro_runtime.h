@@ -12,16 +12,12 @@ class IntroRuntime:public EngineServices {
  struct State;std::unique_ptr<State> state_;
  std::vector<std::unique_ptr<State>> screens_;
  std::filesystem::path save_directory_;
- std::optional<SaveState> menu_save_;
- std::vector<nlohmann::json> slot_queries_;
- // Unversioned save events retain the released input behavior during replay.
- size_t slot_query_cursor_{};bool reconstructing_{},legacy_input_{},narrow_corner_{};
- int input_version()const{return legacy_input_?1:narrow_corner_?2:3;}
  Result<void> open_inventory();
 #ifndef NDEBUG
  std::function<void(const nlohmann::json&)> draw_observer_;
 #endif
- Result<SaveState> save_state()const;
+ Result<DosSaveState> dos_state()const;
+ Result<void> return_to_parent();
  Result<void> restore_dos(ByteView);
  Result<std::vector<RenderSurface>> render_surfaces_impl(bool packed,std::vector<uint8_t>* indices)const;
  Result<void> settle();
@@ -38,11 +34,15 @@ public:
  bool editing_save_name()const;
  Result<void> text_input(std::string_view);
  Result<void> edit_key(std::string_view);
+ // Writes the original DOS SAVE.<n> format.
  Result<void> save(const std::filesystem::path&)const;
- static Result<std::unique_ptr<IntroRuntime>> restore(const std::filesystem::path& data,const std::filesystem::path& save,std::function<Result<void>(const IntroRuntime&)> observe_tick={});
+ // Loads an original-format SAVE.<n> snapshot.
+ static Result<std::unique_ptr<IntroRuntime>> restore(const std::filesystem::path& data,const std::filesystem::path& save);
  Result<void> update();
  Result<void> click(int x,int y,bool right=false);
  Result<void> escape();
+ // Opens the original save (F2) or load (F3) screen from gameplay.
+ Result<void> slot_screen(bool save);
  bool inventory_open()const;
  // Largest free square in the top-left corner (0 when the corner cannot open or close the inventory now).
  int inventory_corner()const;

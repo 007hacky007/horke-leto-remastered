@@ -2,6 +2,9 @@
 #include "render/viewport.h"
 #include "render/renderer_policy.h"
 #include "data/hash.h"
+#include "render/shaders/picture_adjust_msl.h"
+#include "render/shaders/picture_adjust.dxil.h"
+#include "render/shaders/picture_adjust.spv.h"
 #include <algorithm>
 #include <cstring>
 #include <future>
@@ -51,7 +54,7 @@ Result<void> Renderer::preload(const std::vector<RenderSurface>& surfaces,const 
  }
  return {};
 }
-void Renderer::release(){preload_->pins.clear();preload_->resources.clear();preload_->pages.clear();preload_->queue.clear();if(renderer_)SDL_FlushRenderer(renderer_);in_flight_.clear();cache_=TextureCache<SDL_Texture>(256*1024*1024);SDL_DestroyTexture(processed_);processed_=nullptr;SDL_DestroyTexture(canvas_);canvas_=nullptr;SDL_DestroyRenderer(renderer_);renderer_=nullptr;}
+void Renderer::release(){if(adjust_state_){SDL_DestroyGPURenderState(adjust_state_);adjust_state_=nullptr;}if(adjust_shader_){if(auto gpu=renderer_?SDL_GetGPURendererDevice(renderer_):nullptr)SDL_ReleaseGPUShader(gpu,adjust_shader_);adjust_shader_=nullptr;}if(adjust_cpu_){SDL_DestroyTexture(adjust_cpu_);adjust_cpu_=nullptr;}adjust_shader_failed_=false;preload_->pins.clear();preload_->resources.clear();preload_->pages.clear();preload_->queue.clear();if(renderer_)SDL_FlushRenderer(renderer_);in_flight_.clear();cache_=TextureCache<SDL_Texture>(256*1024*1024);SDL_DestroyTexture(processed_);processed_=nullptr;SDL_DestroyTexture(canvas_);canvas_=nullptr;SDL_DestroyRenderer(renderer_);renderer_=nullptr;}
 Renderer::~Renderer(){release();}
 Result<void> Renderer::targets(){
  for(auto target:{&canvas_,&processed_}){*target=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,1920,1440);if(!*target)return error();if(!SDL_SetTextureBlendMode(*target,SDL_BLENDMODE_BLEND)||!SDL_SetTextureScaleMode(*target,SDL_SCALEMODE_LINEAR))return error();}
@@ -153,13 +156,54 @@ Result<void> Renderer::present(std::vector<RenderSurface> surfaces,PalettePostpr
  }
  return finish(effect);
 }
+Result<bool> Renderer::adjust_state(const PalettePostprocess& effect){
+ auto gpu=SDL_GetGPURendererDevice(renderer_);if(!gpu||adjust_shader_failed_)return false;
+ if(!adjust_state_){
+  auto formats=SDL_GetGPUShaderFormats(gpu);SDL_GPUShaderCreateInfo info{};info.stage=SDL_GPU_SHADERSTAGE_FRAGMENT;info.num_samplers=1;info.num_uniform_buffers=1;
+  if(formats&SDL_GPU_SHADERFORMAT_MSL){info.format=SDL_GPU_SHADERFORMAT_MSL;info.code=reinterpret_cast<const Uint8*>(picture_adjust_msl);info.code_size=sizeof(picture_adjust_msl)-1;info.entrypoint="main0";}
+  else if(formats&SDL_GPU_SHADERFORMAT_DXIL){info.format=SDL_GPU_SHADERFORMAT_DXIL;info.code=picture_adjust_dxil;info.code_size=sizeof(picture_adjust_dxil);info.entrypoint="main";}
+  else if(formats&SDL_GPU_SHADERFORMAT_SPIRV){info.format=SDL_GPU_SHADERFORMAT_SPIRV;info.code=picture_adjust_spv;info.code_size=sizeof(picture_adjust_spv);info.entrypoint="main";}
+  else {adjust_shader_failed_=true;return false;}
+  adjust_shader_=SDL_CreateGPUShader(gpu,&info);
+  if(adjust_shader_){SDL_GPURenderStateCreateInfo state{};state.fragment_shader=adjust_shader_;adjust_state_=SDL_CreateGPURenderState(renderer_,&state);}
+  // Pipeline errors surface only as wrong pixels, so draw known colours once and compare with the CPU pass.
+  if(adjust_state_&&!adjust_self_test()){SDL_Log("Picture adjustment shader gave wrong colours; using the CPU");SDL_DestroyGPURenderState(adjust_state_);adjust_state_=nullptr;}
+  if(!adjust_state_){SDL_Log("Picture adjustment shader unavailable, using the CPU: %s",SDL_GetError());if(adjust_shader_){SDL_ReleaseGPUShader(gpu,adjust_shader_);adjust_shader_=nullptr;}adjust_shader_failed_=true;return false;}
+ }
+ const float uniforms[4]{effect.brightness,effect.contrast,0,0};if(!SDL_SetGPURenderStateFragmentUniforms(adjust_state_,0,uniforms,sizeof uniforms))return error();return true;
+}
+bool Renderer::adjust_self_test(){
+ constexpr int width=8;const uint8_t colours[width*4]{0,0,0,255,255,255,255,255,128,128,128,255,252,128,0,255,10,200,40,255,60,60,200,255,255,0,0,255,200,180,170,255};
+ constexpr float brightness=1.4f,contrast=0.6f;std::vector<uint8_t> expected(colours,colours+sizeof colours);adjust_picture(expected,brightness,contrast);
+ auto prior=SDL_GetRenderTarget(renderer_);bool ok=false;SDL_Surface* read=nullptr;
+ auto source=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,width,1),target=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,width,1);
+ const float uniforms[4]{brightness,contrast,0,0};
+ if(source&&target&&SDL_SetTextureScaleMode(source,SDL_SCALEMODE_NEAREST)&&SDL_SetTextureBlendMode(source,SDL_BLENDMODE_NONE)&&SDL_UpdateTexture(source,nullptr,colours,width*4)&&SDL_SetGPURenderStateFragmentUniforms(adjust_state_,0,uniforms,sizeof uniforms)
+  &&SDL_SetRenderTarget(renderer_,target)&&SDL_SetRenderDrawColor(renderer_,0,0,0,0)&&SDL_RenderClear(renderer_)&&SDL_SetGPURenderState(renderer_,adjust_state_)){
+  bool drawn=SDL_RenderTexture(renderer_,source,nullptr,nullptr);SDL_SetGPURenderState(renderer_,nullptr);
+  if(drawn)read=SDL_RenderReadPixels(renderer_,nullptr);
+ }
+ SDL_SetRenderTarget(renderer_,prior);
+ if(auto rgba=read?SDL_ConvertSurface(read,SDL_PIXELFORMAT_RGBA32):nullptr){ok=rgba->w==width;for(int i=0;ok&&i<width*4;++i)if(i%4!=3&&std::abs(int(static_cast<uint8_t*>(rgba->pixels)[i])-int(expected[size_t(i)]))>3)ok=false;SDL_DestroySurface(rgba);}
+ SDL_DestroySurface(read);SDL_DestroyTexture(source);SDL_DestroyTexture(target);return ok;
+}
+Result<void> Renderer::adjust_on_cpu(const PalettePostprocess& effect){
+ auto surface=SDL_RenderReadPixels(renderer_,nullptr);auto rgba=surface?SDL_ConvertSurface(surface,SDL_PIXELFORMAT_RGBA32):nullptr;SDL_DestroySurface(surface);if(!rgba)return error();
+ for(int y=0;y<rgba->h;++y)adjust_picture({static_cast<uint8_t*>(rgba->pixels)+size_t(y)*rgba->pitch,size_t(rgba->w)*4},effect.brightness,effect.contrast);
+ if(!adjust_cpu_){adjust_cpu_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STREAMING,rgba->w,rgba->h);if(!adjust_cpu_||!SDL_SetTextureBlendMode(adjust_cpu_,SDL_BLENDMODE_NONE)){SDL_DestroySurface(rgba);return error();}}
+ bool ok=SDL_UpdateTexture(adjust_cpu_,nullptr,rgba->pixels,rgba->pitch)&&SDL_RenderTexture(renderer_,adjust_cpu_,nullptr,nullptr);SDL_DestroySurface(rgba);if(!ok)return error();return {};
+}
 Result<void> Renderer::finish(PalettePostprocess effect){
  if(effect.gain<0||effect.bias<0||effect.gain+effect.bias>1.00001f)return DataError{"","renderer",0,"invalid postprocess gain/bias"};
  // The pinned SDL Metal/DXIL texture shader applies the post-composition gain.
  // Blending over the bias colour implements fades to white without repainting layers.
  auto value=uint8_t(std::clamp(effect.bias*255.0f,0.0f,255.0f));
- if(!SDL_SetRenderTarget(renderer_,processed_)||!SDL_SetRenderDrawColor(renderer_,value,value,value,255)||!SDL_RenderClear(renderer_)||!SDL_SetTextureColorModFloat(canvas_,effect.gain,effect.gain,effect.gain)||!SDL_RenderTexture(renderer_,canvas_,nullptr,nullptr))return error();
+ bool shader=false;if(effect.adjusted()){auto state=adjust_state(effect);if(!state.has_value())return state.error();shader=state.value();}
+ if(!SDL_SetRenderTarget(renderer_,processed_)||!SDL_SetRenderDrawColor(renderer_,value,value,value,255)||!SDL_RenderClear(renderer_)||!SDL_SetTextureColorModFloat(canvas_,effect.gain,effect.gain,effect.gain))return error();
+ if(shader&&!SDL_SetGPURenderState(renderer_,adjust_state_))return error();
+ bool drawn=SDL_RenderTexture(renderer_,canvas_,nullptr,nullptr);if(shader)SDL_SetGPURenderState(renderer_,nullptr);if(!drawn)return error();
  if(effect.bias>0){SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_ADD);SDL_SetRenderDrawColor(renderer_,value,value,value,255);SDL_RenderFillRect(renderer_,nullptr);SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_NONE);}
+ if(effect.adjusted()&&!shader){auto r=adjust_on_cpu(effect);if(!r.has_value())return r;}
  int w{},h{};if(!SDL_SetRenderTarget(renderer_,nullptr)||!SDL_GetRenderOutputSize(renderer_,&w,&h)||!SDL_SetRenderDrawColor(renderer_,0,0,0,255)||!SDL_RenderClear(renderer_))return error();auto v=Viewport::fit(w,h,scaling_);SDL_FRect dst{float(v.x),float(v.y),float(v.width),float(v.height)};if(!SDL_SetTextureScaleMode(processed_,scaling_==ScalingMode::Whole&&!v.fractional?SDL_SCALEMODE_NEAREST:SDL_SCALEMODE_LINEAR)||!SDL_RenderTexture(renderer_,processed_,nullptr,&dst))return error();return {};
 }
 Result<RenderCapture> Renderer::readback()const {

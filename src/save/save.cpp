@@ -1,5 +1,4 @@
 #include "save/save.h"
-#include "data/hash.h"
 #include "data/grp.h"
 #include "data/byte_reader.h"
 #include "data/adb.h"
@@ -11,13 +10,11 @@
 namespace hl {
 namespace {
 DataError error(std::string reason){return {"","save",0,std::move(reason)};}
-constexpr uint32_t max_size=16*1024*1024;
 }
-Result<void> save_game(const SaveState& state,const std::filesystem::path& path) {
- std::string payload=nlohmann::json{{"data_identity",state.data_identity},{"reconstruction",state.reconstruction}}.dump();if(payload.size()>max_size)return error("save exceeds bounded format size");
- auto checksum=sha256(std::as_bytes(std::span(payload)));auto staging=path;staging+=".tmp";
+Result<void> write_file_atomic(const std::filesystem::path& path,std::span<const std::byte> bytes) {
+ auto staging=path;staging+=".tmp";
  std::ofstream out(staging,std::ios::binary|std::ios::trunc);if(!out)return error("cannot open staging save");
- out.write("HLSV",4);auto word=[&](uint32_t v){for(unsigned i=0;i<4;++i)out.put(char(v>>(i*8)));};word(1);word(uint32_t(payload.size()));out.write(checksum.data(),64);out.write(payload.data(),std::streamsize(payload.size()));out.flush();bool success=bool(out);out.close();if(!success||!out){std::error_code ec;std::filesystem::remove(staging,ec);return error("staging save write failed");}
+ out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));out.flush();bool success=bool(out);out.close();if(!success||!out){std::error_code ec;std::filesystem::remove(staging,ec);return error("staging save write failed");}
 #ifdef _WIN32
  if(!MoveFileExW(staging.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){std::error_code ec;std::filesystem::remove(staging,ec);return error("atomic save replacement failed");}
 #else
@@ -25,11 +22,15 @@ Result<void> save_game(const SaveState& state,const std::filesystem::path& path)
 #endif
  return {};
 }
-Result<SaveState> load_game(const std::filesystem::path& path,std::string_view identity) {
- std::error_code ec;auto size=std::filesystem::file_size(path,ec);if(ec||size<76||size>max_size+76)return error("missing or invalid save size");auto b=read_file(path);if(!b.has_value())return error("cannot read save");ByteReader r(b.value());auto magic=r.take(4).value();if(std::string(reinterpret_cast<const char*>(magic.data()),4)!="HLSV")return error("invalid save signature");
- if(r.u32le().value()!=1)return error("unsupported save version");auto length=r.u32le().value();if(length!=r.remaining()-64)return error("truncated or trailing save payload");auto digest=r.take(64).value(),payload=r.take(length).value();if(sha256(payload)!=std::string(reinterpret_cast<const char*>(digest.data()),64))return error("save checksum mismatch");
- try {auto j=nlohmann::json::parse(reinterpret_cast<const char*>(payload.data()),reinterpret_cast<const char*>(payload.data())+payload.size());if(j.at("data_identity").get<std::string>()!=identity)return error("save data identity mismatch");if(!j.at("reconstruction").is_object())return error("invalid reconstruction state");return SaveState{std::string(identity),j.at("reconstruction")};}
- catch(const nlohmann::json::exception&){return error("invalid save payload");}
+std::filesystem::path dos_save_path(const std::filesystem::path& directory,int slot){return directory/("SAVE."+std::to_string(slot));}
+std::array<std::vector<uint8_t>,10> read_save_names(const std::filesystem::path& directory) {
+ std::array<std::vector<uint8_t>,10> names;auto bytes=read_file(directory/"SAVNAMES.TXT");if(!bytes.has_value()||bytes.value().size()!=510)return names;
+ for(size_t slot=0;slot<10;++slot)for(size_t i=0;i<50;++i){auto c=std::to_integer<uint8_t>(bytes.value()[slot*51+i]);if(!c)break;names[slot].push_back(c);}
+ return names;
+}
+Result<void> write_save_names(const std::filesystem::path& directory,const std::array<std::vector<uint8_t>,10>& names) {
+ std::vector<std::byte> bytes(510);for(size_t slot=0;slot<10;++slot){if(names[slot].size()>50)return error("save name exceeds 50 glyphs");for(size_t i=0;i<names[slot].size();++i)bytes[slot*51+i]=std::byte(names[slot][i]);}
+ return write_file_atomic(directory/"SAVNAMES.TXT",bytes);
 }
 }
 
@@ -66,9 +67,50 @@ Result<DosSaveState> parse_dos_save(ByteView bytes) {
   if(payload.size()<889||std::to_integer<unsigned>(payload[0])>1)return fail("invalid DOS scene header");
   auto n=name(payload.subspan(1,32));if(!n.has_value())return n.error();auto count=word(payload,85);if(count>1000||payload.size()!=889+size_t(count)*34)return fail("invalid DOS scene member table");
   DosSceneState saved{payload[0]==std::byte{1},n.value(),{}};
+  // The original leaves stale memory in unused name fields, so these two are informative only.
+  auto loose=[&](ByteView field){auto v=name(field);return v.has_value()?v.value():std::string{};};
+  saved.entered_from=loose(payload.subspan(33,32));saved.cursor=loose(payload.subspan(857,32));
+  saved.screen=std::bit_cast<int32_t>(word(payload,65));saved.x=std::bit_cast<int32_t>(word(payload,69));saved.y=std::bit_cast<int32_t>(word(payload,73));saved.direction=std::bit_cast<int32_t>(word(payload,77));saved.actor_visible=std::bit_cast<int32_t>(word(payload,81));
+  for(size_t i=0;i<256;++i)for(size_t component=0;component<3;++component)saved.palette[i][component]=std::to_integer<uint8_t>(payload[89+i*3+component]);
   for(uint32_t i=0;i<count;++i){auto member=payload.subspan(889+size_t(i)*34,34);auto n=name(member.subspan(2,32));if(!n.has_value()||n.value().empty()||!saved.members.emplace(n.value(),short_word(member,0)).second)return fail("invalid or duplicate DOS scene member");}
   out.scenes.emplace(entry.name,std::move(saved));
  }
  if(!out.scenes.contains(out.scene)||!out.scenes.at(out.scene).visited)return fail("current DOS scene is missing or unvisited");return out;
+}
+
+Result<std::vector<std::byte>> write_dos_save(const DosSaveState& state) {
+ auto fail=[](std::string why)->Result<std::vector<std::byte>>{return DataError{"","DOS save",0,std::move(why)};};
+ auto valid=[](const std::string& n,size_t width){if(n.size()>=width)return false;for(unsigned char c:n)if(c<32||c>126||c=='/'||c=='\\')return false;return true;};
+ using Bytes=std::vector<std::byte>;
+ auto put_name=[](Bytes& b,size_t off,const std::string& n){for(size_t i=0;i<n.size();++i)b[off+i]=std::byte(n[i]);};
+ auto put32=[](Bytes& b,size_t off,uint32_t v){for(unsigned i=0;i<4;++i)b[off+i]=std::byte(uint8_t(v>>(i*8)));};
+ auto put16=[](Bytes& b,size_t off,int v){auto u=uint16_t(int16_t(v));b[off]=std::byte(uint8_t(u));b[off+1]=std::byte(uint8_t(u>>8));};
+ auto put_palette=[](Bytes& b,size_t off,const std::array<std::array<uint8_t,3>,256>& palette){for(size_t i=0;i<256;++i)for(size_t c=0;c<3;++c)b[off+i*3+c]=std::byte(palette[i][c]);};
+ std::map<std::string,Bytes> entries;
+ if(!valid(state.character_file,16))return fail("invalid character file");
+ Bytes c(42);put_name(c,0,state.character_file);put16(c,32,state.x);put16(c,34,state.y);put16(c,36,state.direction);put16(c,38,state.character_visible?1:0);put16(c,40,state.movement_depth);entries["__c"]=std::move(c);
+ if(!valid(state.scene,32)||!state.scenes.contains(state.scene))return fail("invalid current scene");
+ Bytes sc(800);put_name(sc,0,state.scene);put_palette(sc,32,state.palette);entries["__s"]=std::move(sc);
+ Bytes v(4+state.globals.size()*36);put32(v,0,uint32_t(state.globals.size()));size_t i=0;
+ for(const auto& [n,value]:state.globals){if(!valid(n,32))return fail("invalid global name");put_name(v,4+i*36,n);put32(v,36+i*36,std::bit_cast<uint32_t>(value));++i;}entries["__v"]=std::move(v);
+ Bytes d;for(auto key:{"inventory_scr","escape_scr","load_scr","save_scr"}){auto it=state.strings.find(key);std::string value=it==state.strings.end()?std::string{}:it->second;if(!valid(value,32))return fail(std::string("invalid system string ")+key);d.push_back(std::byte(uint8_t(value.size()+1)));for(char ch:value)d.push_back(std::byte(ch));d.push_back(std::byte{});}
+ for(auto key:{"gfx_bright","gfx_contrast","sound_volume","music_volume","text_speed","tell_mode","version"}){auto it=state.integers.find(key);if(it==state.integers.end())return fail(std::string("missing system integer ")+key);auto off=d.size();d.resize(off+4);put32(d,off,std::bit_cast<uint32_t>(it->second));}entries["__d"]=std::move(d);
+ // HL.EXE stores a live object pointer after each count; a zero there hides the item in the inventory screen.
+ Bytes inv(1400);for(size_t slot=0;slot<35;++slot){const auto& item=state.inventory[slot];if(!item.count)continue;if(!valid(item.item,32)||item.item.empty())return fail("invalid inventory item");put_name(inv,slot*40,item.item);put32(inv,slot*40+32,item.count);put32(inv,slot*40+36,0xffffffffu);}entries["__i"]=std::move(inv);
+ for(const auto& [id,scene]:state.scenes){
+  if(!valid(id,32)||!valid(scene.region,32))return fail("invalid scene record");
+  Bytes b(889+scene.members.size()*34);b[0]=std::byte(scene.visited?1:0);put_name(b,1,scene.region);if(valid(scene.entered_from,32))put_name(b,33,scene.entered_from);
+  put32(b,65,std::bit_cast<uint32_t>(scene.screen));put32(b,69,std::bit_cast<uint32_t>(scene.x));put32(b,73,std::bit_cast<uint32_t>(scene.y));put32(b,77,std::bit_cast<uint32_t>(scene.direction));put32(b,81,std::bit_cast<uint32_t>(scene.actor_visible));put32(b,85,uint32_t(scene.members.size()));
+  put_palette(b,89,scene.palette);if(valid(scene.cursor,32))put_name(b,857,scene.cursor);
+  size_t m=0;for(const auto& [member,count]:scene.members){if(!valid(member,32)||member.empty())return fail("invalid scene member");put16(b,889+m*34,count);put_name(b,891+m*34,member);++m;}
+  entries[id]=std::move(b);
+ }
+ for(const auto& [id,region]:state.regions){if(state.scenes.contains(id))continue;if(!valid(id,32)||!valid(region,32))return fail("invalid region override");Bytes b(66);put_name(b,0,region);entries[id]=std::move(b);}
+ // ADB container as HL.EXE writes it: three spare directory slots, payloads in directory order.
+ uint32_t used=uint32_t(entries.size()),total=used+3;size_t base=20+size_t(total)*40,payload=0;for(const auto& [n,b]:entries)payload+=b.size();
+ Bytes out(base+payload);put32(out,0,666);put32(out,4,1);put32(out,8,total);put32(out,12,used);put32(out,16,31);
+ size_t slot=0,offset=0;for(const auto& [n,b]:entries){put32(out,20+slot*40,uint32_t(offset));put_name(out,24+slot*40,n);put32(out,56+slot*40,uint32_t(b.size()));std::copy(b.begin(),b.end(),out.begin()+std::ptrdiff_t(base+offset));offset+=b.size();++slot;}
+ if(out.size()>1024*1024)return fail("DOS save exceeds bounded size");
+ return out;
 }
 }

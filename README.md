@@ -49,7 +49,8 @@ silicon and on Windows 10 and 11, plus a builder that prepares the pictures:
 - **F11** (or Alt+Enter, or Cmd+Ctrl+F on a Mac) switches fullscreen. The window
   opens as large as fits your screen and remembers its size.
 - **Esc** opens the game's own menu (save, load, volume); Esc again returns to
-  the game. **F10** opens the graphics options.
+  the game. **F2** and **F3** open the save and load screens directly, as in the
+  original. **F10** opens the graphics options.
 - **I** or **Tab** opens the inventory (so does a click on the small bag in the
   top-left corner). The bag can be hidden in the options.
 - The music from the CD and all the Czech voices are kept.
@@ -165,7 +166,9 @@ redraws are useless to anyone without the game.
 
 **Where are my saved games?** On a Mac in
 `~/Library/Application Support/hl-port/HorkeLeto`, on Windows in
-`%APPDATA%\hl-port\HorkeLeto`. Removing the game does not remove them.
+`%APPDATA%\hl-port\HorkeLeto`. Removing the game does not remove them. They use
+the original game's own format (`SAVE.0` to `SAVE.9` plus `SAVNAMES.TXT`), so the
+DOS version can load them too.
 
 **It says my CD is the wrong release.** Only the release we could test is
 supported so far. If you have a different one, open an issue with the log from

@@ -149,9 +149,11 @@ int run_native_app(const AppOptions& options) {
   if(event.type==SDL_EVENT_KEY_DOWN&&game.editing_save_name()){if(event.key.key==SDLK_RETURN)return game.edit_key("enter");if(event.key.key==SDLK_BACKSPACE)return game.edit_key("backspace");if(event.key.key==SDLK_ESCAPE)return game.edit_key("escape");return {};}
   if(event.type==SDL_EVENT_KEY_DOWN&&(event.key.key==SDLK_I||event.key.key==SDLK_TAB)&&!(event.key.mod&(SDL_KMOD_GUI|SDL_KMOD_CTRL|SDL_KMOD_ALT))){if(!event.key.repeat)return game.toggle_inventory();return {};}
   if(event.type==SDL_EVENT_KEY_DOWN){if(event.key.key==SDLK_ESCAPE){if(!event.key.repeat)return game.escape();return {};}
-   auto file=pref_path/"scene.hls";
-   if(event.key.key==SDLK_F2&&game.can_save()){auto r=game.save(file);if(r.has_value())++quick_saves;return r;}
-   if(event.key.key==SDLK_F3&&std::filesystem::exists(file)){auto r=game.load(file);if(r.has_value())++quick_loads;return r;}
+   auto file=pref_path/"QUICK.SAV";
+   if((event.key.key==SDLK_F2||event.key.key==SDLK_F3)&&!event.key.repeat)return game.slot_screen(event.key.key==SDLK_F2);
+   // Port-only quick slot; the original keys F2/F3 open its save and load screens above.
+   if(event.key.key==SDLK_F5&&game.can_save()){auto r=game.save(file);if(r.has_value())++quick_saves;return r;}
+   if(event.key.key==SDLK_F9&&std::filesystem::exists(file)){auto r=game.load(file);if(r.has_value())++quick_loads;return r;}
   }
   if(event.type==SDL_EVENT_MOUSE_MOTION||event.type==SDL_EVENT_MOUSE_BUTTON_DOWN)return dispatch_runtime_mouse(game,window,renderer.value()->sdl(),event,graphics.settings().scaling);
   return {};

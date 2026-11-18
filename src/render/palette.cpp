@@ -2,6 +2,7 @@
 #include "data/hash.h"
 #include <cstdlib>
 #include <algorithm>
+#include <cmath>
 namespace hl {
 namespace {
 uint8_t shade_luminance(unsigned luminance) {
@@ -20,13 +21,20 @@ Result<std::string> frame_palette_identity(const IndexedFrame& frame,const Palet
  return sha256(std::as_bytes(std::span(frame.palette)));
 }
 Result<PalettePostprocess> palette_postprocess(const PaletteView& view){
- if(!view.visible)return PalettePostprocess{0,0};
+ if(!view.visible){PalettePostprocess out{0,0};out.brightness=float(std::clamp(view.brightness,0,100))/50.0f;out.contrast=float(std::clamp(view.contrast,0,100))/50.0f;return out;}
  double sx=0,sy=0,sxx=0,sxy=0;constexpr double count=256*3;
  for(size_t i=0;i<256;++i)for(size_t c=0;c<3;++c){double x=view.source[i][c]/4,y=view.current[i][c];sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;}
  double variance=sxx-sx*sx/count;double gain=variance?std::clamp((sxy-sx*sy/count)/variance,0.0,1.0):0;double bias=std::clamp((sy-gain*sx)/count,0.0,63.0)/63;
  if(gain+bias>1.02)return DataError{"","palette",0,"palette transform requires an offline variant"};
  for(size_t i=0;i<256;++i)for(size_t c=0;c<3;++c)if(std::abs(gain*(view.source[i][c]/4)+bias*63-view.current[i][c])>1.05)return DataError{"","palette",i,"palette transform requires an offline variant"};
- return PalettePostprocess{float(gain),float(std::min(bias,1-gain))};
+ PalettePostprocess out{float(gain),float(std::min(bias,1-gain))};
+ out.brightness=float(std::clamp(view.brightness,0,100))/50.0f;out.contrast=float(std::clamp(view.contrast,0,100))/50.0f;return out;
+}
+void adjust_picture(std::span<uint8_t> rgba,float brightness,float contrast){
+ for(size_t i=0;i+3<rgba.size();i+=4){
+  float value=std::max({rgba[i],rgba[i+1],rgba[i+2]})/255.0f;float target=std::clamp(((value-0.5f)*contrast+0.5f)*brightness,0.0f,1.0f);
+  for(size_t c=0;c<3;++c)rgba[i+c]=uint8_t(std::lround((value>0?rgba[i+c]/255.0f*(target/value):target)*255.0f));
+ }
 }
 uint8_t dialogue_shade_index(const Palette& palette,uint8_t index){auto p=palette[index];return shade_luminance(p[0]*30u+p[1]*59u+p[2]*11u);}
 uint8_t dialogue_shade_source_index(const Palette& palette,uint8_t index){auto p=palette[index];return shade_luminance((p[0]*30u+p[1]*59u+p[2]*11u)/4);}

@@ -81,8 +81,8 @@ std::vector<RenderSurface> inventory_icon_surfaces(int corner){
 }
 std::vector<RenderSurface> help_surfaces(const BitmapFont& font,uint8_t alpha,const GraphicsSettings& settings){
  if(!alpha)return {};
- std::vector<RenderSurface> out{rectangle(128,16,384,156,-95,{255,65,0,alpha}),rectangle(130,18,380,152,-96,{24,8,0,alpha})};
- const std::u32string_view lines[]={U"Klávesy",U"Esc menu    O nastavení    H / ? nápověda",U"I / Tab inventář (nebo levý horní roh)",U"G grafika Original/Remastered",U"mezerník aktivní místa",
+ std::vector<RenderSurface> out{rectangle(128,16,384,176,-95,{255,65,0,alpha}),rectangle(130,18,380,172,-96,{24,8,0,alpha})};
+ const std::u32string_view lines[]={U"Klávesy",U"Esc menu    O nastavení    H / ? nápověda",U"I / Tab inventář (nebo levý horní roh)",U"F2 uložit hru    F3 nahrát hru",U"G grafika Original/Remastered",U"mezerník aktivní místa",
 #ifdef __APPLE__
  U"Cmd+Ctrl+F celá obrazovka",
 #else

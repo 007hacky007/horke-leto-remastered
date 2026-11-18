@@ -23,6 +23,7 @@
 #include <set>
 namespace hl {
 namespace {
+constexpr std::string_view empty_save_name="Tato pozice zat\xA1m nem\xA0 jm\x82no";
 Result<std::vector<uint8_t>> name_bytes(std::string_view text) {
  std::vector<uint8_t> out;
  for(size_t i=0;i<text.size();) {
@@ -44,18 +45,20 @@ struct IntroRuntime::State {
  struct Task {std::unique_ptr<Process> process;Object* owner{};uint64_t scene{};bool inventory_context{};};
  struct Animation {FlcDecoder decoder;IndexedFrame frame;Object* owner{};Process* waiter{};int32_t cycles{},delay{},countdown{};std::string variable;bool phase_controlled{},done{},forever{};int32_t x{},y{},z{};bool attached{};};
  struct Voice {uint64_t id{};Process* waiter{};std::string variable;PcmAudio pcm;float gain{};SampleSchedule schedule;bool phase_controlled{};int32_t priority{100};bool inventory_context{};};
- std::string data_identity;std::vector<nlohmann::json> inputs;
- std::vector<uint8_t> dos_base;std::map<std::string,std::set<std::string>> dos_members;bool rebuilding_scene{};
+ std::string data_identity;
+ // Screens as DOS keeps them for saves: refreshed whenever a screen is left.
+ std::map<std::string,DosSceneState> scene_records;std::string character_file;
+ std::map<std::string,std::set<std::string>> dos_members;bool rebuilding_scene{};
  std::filesystem::path data;AdbDatabase db;GrpArchive archive;BitmapFont font;Interpreter vm;IntroRuntime* services{};
  std::map<std::string,std::set<std::string>> removed_objects,extra_objects;std::set<std::string> initialized_objects;
  std::map<std::string,std::string> region_overrides;
  std::list<Object> objects;std::array<Task,100> tasks;std::map<Process*,Object*> owners;
  std::list<Animation> animations;std::vector<Voice> voices;Inventory inventory;Mixer mixer{48000,4};CdPlayer cd;std::string selected;std::optional<unsigned> selected_slot;bool inventory_open{};
- std::optional<TextOverlay> dialogue;std::string dialogue_text;uint64_t dialogue_voice{};Process* dialogue_waiter{};
+ std::optional<TextOverlay> dialogue;bool dialogue_hidden{};std::string dialogue_text;uint64_t dialogue_voice{};Process* dialogue_waiter{};
  std::optional<ChoiceText> choices;bool suppress_speech{},speech_loop{};std::optional<int> speech_direction;std::optional<CharacterDefinition> speech_character;unsigned speech_frame{},speech_period{1},speech_countdown{},dialogue_ticks{};
  std::string pending_overlay;bool return_screen{};Process* overlay_waiter{};
  // legacy_length mirrors the 1.0 editor, which kept the empty-slot placeholder as text, so replayed Enter keys keep their result.
- struct NameEditor {Object* owner{};Process* waiter{};int slot{};std::vector<uint8_t> bytes;size_t legacy_length{};};
+ struct NameEditor {Object* owner{};Process* waiter{};int slot{};std::vector<uint8_t> bytes;size_t legacy_length{};uint64_t blink_from{};bool cursor{true};};
  std::optional<NameEditor> name_editor;std::map<int,std::vector<uint8_t>> save_names;int save_slot{-1},load_slot{-1};
  std::vector<float> audio;uint64_t audio_fraction{},tick{},scene_id{};std::string scene,pending,cursor;int pointer_x{},pointer_y{};int user_locks{},inventory_locks{},character_locks{1};bool quit{},screen_visible{true};
  mutable std::map<std::string,IndexedFrame> static_frames,cursor_frames;mutable std::map<std::string,std::vector<IndexedFrame>> character_frames;
@@ -63,7 +66,7 @@ struct IntroRuntime::State {
  mutable Palette identity_palette{};
  mutable std::map<std::tuple<std::string,uint32_t,int,int,int,int,int,int,int>,std::string> palette_identities;
  struct Fade {Palette from,target;unsigned step{};Process* waiter{};};
- std::optional<Fade> fade;bool cooperative_fades{},initial_cooperative_fades{};
+ std::optional<Fade> fade;bool cooperative_fades{};
  Palette palette{},source_palette{},render_palette{};std::function<Result<void>(unsigned)> palette_presenter;std::map<std::string,std::string> strings;std::map<std::string,int32_t> integers{{"version",1},{"sound_volume",50},{"music_volume",100}};uint32_t random_state{1};std::vector<nlohmann::json> trace;
  std::optional<Movement> walk;std::optional<Region> walk_region;Process* arrival_waiter{};unsigned char_frame{};int final_direction{-1};
  std::optional<CharacterDefinition> character;std::string character_id;bool character_visible{};int char_x{},char_y{},char_direction{4},near_z{480},far_z{480};
@@ -86,6 +89,10 @@ struct IntroRuntime::State {
  Result<void> name_surface(Object& owner,const std::vector<uint8_t>& text) {
   auto pixels=render_font(font,text);if(!pixels.has_value())return pixels.error();IndexedFrame f;f.logical_width=400;f.logical_height=16;f.indices.resize(400*16);f.palette=palette;
   for(size_t y=0;y<16;++y)for(size_t x=0;x<text.size()*8;++x)f.indices[y*400+x]=pixels.value()[y*text.size()*8+x]?1:0;owner.picture=std::move(f);owner.fixed_surface=true;owner.name_glyphs=text;return {};
+ }
+ // The edited name shows a blinking underscore cursor, solid right after each keystroke.
+ Result<void> show_name_editor(bool restart=false) {
+  auto& e=*name_editor;if(restart){e.blink_from=tick;e.cursor=true;}auto text=e.bytes;if(e.cursor&&text.size()<50)text.push_back('_');return name_surface(*e.owner,text);
  }
  Result<void> begin_speech_animation(int direction,bool loop) {
   if(direction<0||direction>=8)return DataError{"","character",0,"invalid special animation direction"};
@@ -113,10 +120,18 @@ struct IntroRuntime::State {
   if(removed_objects[scene].contains(o.identity)){o.removed=true;return &o;}
   auto r=spawn(o,0);if(!r.has_value())return r.error();auto changed=region_overrides.find(o.identity);if(changed!=region_overrides.end()){auto region_value=region(changed->second);if(!region_value.has_value())return region_value.error();o.region=std::move(region_value.value());if(o.identity==scene)walk_region=o.region;}return &o;
  }
+ // DOS records the cursor by its FLC file name; scripts select it through an ADB alias.
+ std::string cursor_file()const{if(cursor.empty())return {};auto file=alias(cursor);return file.has_value()?file.value():std::string{};}
+ void record_scene(bool screen) {
+  if(scene.empty())return;auto& r=scene_records[scene];r.visited=true;r.members.clear();
+  for(const auto& o:objects)if(o.scene==scene_id&&!o.removed&&o.identity!=scene)r.members.emplace(o.identity,1);
+  r.screen=screen?1:0;r.x=char_x;r.y=char_y;r.direction=char_direction;r.actor_visible=character_visible?1:0;r.palette=source_palette;r.cursor=cursor_file();
+ }
  Result<void> transition() {
   for(unsigned n=0;!pending.empty();++n) {
    if(n==100)return DataError{"",scene,0,"scene transition budget exhausted"};
    if(!selected.empty()){auto r=inventory.add(selected);if(!r.has_value())return r.error();selected.clear();}inventory_open=false;
+   record_scene(false);if(!initialized_objects.contains(pending)&&!scene_records.contains(pending))scene_records[pending].entered_from=scene;
    fade.reset();scene=std::move(pending);pending.clear();++scene_id;mixer.stop_all();cd.stop();animations.clear();voices.clear();static_frames.clear();cursor_frames.clear();palette_identities.clear();dialogue.reset();dialogue_text.clear();dialogue_waiter=nullptr;walk.reset();arrival_waiter=nullptr;walk_region.reset();near_z=far_z=480;
    choices.reset();speech_direction.reset();
    for(auto& task:tasks)task={};owners.clear();objects.clear();
@@ -138,27 +153,32 @@ Result<std::unique_ptr<IntroRuntime>> IntroRuntime::open(const std::filesystem::
 }
 bool IntroRuntime::fading()const{return state_->fade.has_value();}
 void IntroRuntime::set_cooperative_fades(bool enabled){
- auto& s=*state_;if(s.scene.empty())s.initial_cooperative_fades=enabled;
- else if(s.cooperative_fades!=enabled)s.inputs.push_back({{"tick",s.tick},{"kind","cooperative_fades"},{"enabled",enabled}});
- s.cooperative_fades=enabled;
+ state_->cooperative_fades=enabled;
 }
 void IntroRuntime::set_palette_presenter(std::function<Result<void>(unsigned)> presenter){state_->palette_presenter=std::move(presenter);}
+Result<void> IntroRuntime::return_to_parent(){
+state_->record_scene(true);auto child=std::move(state_);state_=std::move(screens_.back());screens_.pop_back();auto& parent=*state_;
+   parent.vm.reset_globals();for(const auto& [name,value]:child->vm.globals()){auto r=parent.vm.event_global(name,value,true);if(!r.has_value())return r;}
+   parent.dos_members=std::move(child->dos_members);parent.inventory=std::move(child->inventory);parent.removed_objects=std::move(child->removed_objects);parent.extra_objects=std::move(child->extra_objects);parent.region_overrides=std::move(child->region_overrides);parent.strings=std::move(child->strings);parent.scene_records=std::move(child->scene_records);parent.character_file=std::move(child->character_file);parent.integers=std::move(child->integers);parent.trace=std::move(child->trace);parent.tick=child->tick;parent.pointer_x=child->pointer_x;parent.pointer_y=child->pointer_y;
+   if(parent.overlay_waiter){parent.overlay_waiter->state=ProcessState::ready;parent.overlay_waiter=nullptr;}
+ return {};
+}
 Result<void> IntroRuntime::settle() {
  for(unsigned depth=0;depth<100;++depth){auto& s=*state_;
-  if(s.save_slot>=0||s.load_slot>=0){int slot=s.save_slot>=0?s.save_slot:s.load_slot;auto path=save_directory_/("slot-"+std::to_string(slot)+".hls");
-   if(reconstructing_){if(s.save_slot>=0)return DataError{"",s.scene,0,"slot save inside reconstruction history"};s.load_slot=-1;return {};}
-   if(s.save_slot>=0){if(!menu_save_)return DataError{"",s.scene,0,"no allowed gameplay state for slot save"};auto saved=*menu_save_;saved.reconstruction["slot_name"]=s.save_names[slot];std::filesystem::create_directories(save_directory_);auto r=save_game(saved,path);if(!r.has_value())return r;}
-   s.save_slot=s.load_slot=-1;if(std::filesystem::exists(path))return load(path);return {};
+  if(s.save_slot>=0||s.load_slot>=0){int slot=s.save_slot>=0?s.save_slot:s.load_slot;auto path=dos_save_path(save_directory_,slot);
+   // DOS 0x2cfb7 closes every temporary screen before it writes the snapshot, so play resumes in the world.
+   if(s.save_slot>=0){auto names=s.save_names;s.save_slot=-1;while(!screens_.empty()){auto r=return_to_parent();if(!r.has_value())return r;}
+    std::filesystem::create_directories(save_directory_);auto r=save(path);if(!r.has_value())return r;
+    auto stored=read_save_names(save_directory_);for(int i=0;i<10;++i){auto known=names.find(i);if(known!=names.end())stored[size_t(i)]=known->second;if(stored[size_t(i)].empty())stored[size_t(i)].assign(empty_save_name.begin(),empty_save_name.end());}
+    r=write_save_names(save_directory_,stored);if(!r.has_value())return r;state_->save_names=names;continue;}
+   s.load_slot=-1;if(std::filesystem::exists(path))return load(path);return {};
   }
-  if(s.return_screen){s.return_screen=false;if(screens_.empty())return {};auto child=std::move(state_);state_=std::move(screens_.back());screens_.pop_back();auto& parent=*state_;
-   parent.vm.reset_globals();for(const auto& [name,value]:child->vm.globals()){auto r=parent.vm.event_global(name,value,true);if(!r.has_value())return r;}
-   parent.dos_base=std::move(child->dos_base);parent.dos_members=std::move(child->dos_members);parent.inventory=std::move(child->inventory);parent.removed_objects=std::move(child->removed_objects);parent.extra_objects=std::move(child->extra_objects);parent.region_overrides=std::move(child->region_overrides);parent.strings=std::move(child->strings);parent.integers=std::move(child->integers);parent.inputs=std::move(child->inputs);parent.trace=std::move(child->trace);parent.tick=child->tick;parent.pointer_x=child->pointer_x;parent.pointer_y=child->pointer_y;
-   if(parent.overlay_waiter){parent.overlay_waiter->state=ProcessState::ready;parent.overlay_waiter=nullptr;}continue;
+  if(s.return_screen){s.return_screen=false;if(screens_.empty())return {};auto r=return_to_parent();if(!r.has_value())return r;continue;
   }
   if(!s.pending_overlay.empty()){
    if(screens_.size()>=16)return DataError{"",s.scene,0,"temporary screen nesting exceeds16"};auto name=std::move(s.pending_overlay);s.pending_overlay.clear();auto opened=open(s.data);if(!opened.has_value())return opened.error();auto child=std::move(opened.value()->state_);child->services=this;
    for(const auto& [key,value]:s.vm.globals()){auto r=child->vm.event_global(key,value,true);if(!r.has_value())return r;}
-   child->scene=std::move(name);child->pointer_x=s.pointer_x;child->pointer_y=s.pointer_y;child->tick=s.tick;child->inputs=s.inputs;child->trace=s.trace;child->dos_base=s.dos_base;child->dos_members=s.dos_members;child->inventory=s.inventory;child->removed_objects=s.removed_objects;child->extra_objects=s.extra_objects;child->region_overrides=s.region_overrides;child->strings=s.strings;child->integers=s.integers;child->palette=s.palette;child->source_palette=s.source_palette;child->render_palette=s.render_palette;child->palette_presenter=s.palette_presenter;child->cooperative_fades=s.cooperative_fades;child->initial_cooperative_fades=s.initial_cooperative_fades;child->cursor=s.cursor;child->character=s.character;child->character_id=s.character_id;child->char_x=s.char_x;child->char_y=s.char_y;child->char_direction=s.char_direction;
+   child->scene=std::move(name);child->pointer_x=s.pointer_x;child->pointer_y=s.pointer_y;child->tick=s.tick;child->trace=s.trace;child->scene_records=s.scene_records;child->character_file=s.character_file;child->dos_members=s.dos_members;child->inventory=s.inventory;child->removed_objects=s.removed_objects;child->extra_objects=s.extra_objects;child->region_overrides=s.region_overrides;child->strings=s.strings;child->integers=s.integers;child->palette=s.palette;child->source_palette=s.source_palette;child->render_palette=s.render_palette;child->palette_presenter=s.palette_presenter;child->cooperative_fades=s.cooperative_fades;child->cursor=s.cursor;child->character=s.character;child->character_id=s.character_id;child->char_x=s.char_x;child->char_y=s.char_y;child->char_direction=s.char_direction;
    screens_.push_back(std::move(state_));state_=std::move(child);auto r=state_->object(state_->scene);if(!r.has_value())return r.error();continue;
   }
   auto r=s.transition();if(!r.has_value())return r;if(s.pending_overlay.empty()&&!s.return_screen)return {};
@@ -173,22 +193,21 @@ bool IntroRuntime::character_loaded()const{return state_->character.has_value();
 const std::vector<nlohmann::json>& IntroRuntime::trace()const{return state_->trace;}
 std::span<const float> IntroRuntime::audio()const{return state_->audio;}
 bool IntroRuntime::can_save()const {const auto& s=*state_;auto menu=s.strings.find("escape_scr");return (menu==s.strings.end()||s.scene!=menu->second)&&screens_.empty()&&!s.fade&&s.character&&s.inventory_locks<=0&&s.user_locks<=0&&!s.dialogue_waiter&&!s.name_editor&&s.selected.empty()&&!s.inventory_open&&!s.quit;}
-Result<SaveState> IntroRuntime::save_state()const {
- const auto& s=*state_;if(!can_save())return DataError{"",s.scene,0,"save not allowed at this point"};if(s.tick>1000000||s.inputs.size()>100000)return DataError{"",s.scene,0,"reconstruction history exceeds bounded save policy"};
- auto saved=SaveState{s.data_identity,{{"cooperative_fades",s.initial_cooperative_fades},{"tick",s.tick},{"events",s.inputs},{"slot_queries",slot_queries_},{"pointer",{s.pointer_x,s.pointer_y}},{"checkpoint",nlohmann::json::parse(canonical_checkpoint(checkpoint()))}}};if(!s.dos_base.empty())saved.reconstruction["dos_base"]=s.dos_base;return saved;
+Result<DosSaveState> IntroRuntime::dos_state()const {
+ const auto& s=*state_;if(!s.character||s.character_file.empty())return DataError{"",s.scene,0,"no character to save"};
+ DosSaveState out;out.scene=s.scene;out.character_file=s.character_file;out.x=s.char_x;out.y=s.char_y;out.direction=s.char_direction;out.movement_depth=1-s.character_locks;out.character_visible=s.character_visible;
+ out.globals=s.vm.globals();out.integers=s.integers;for(auto [key,value]:std::initializer_list<std::pair<const char*,int32_t>>{{"gfx_bright",50},{"gfx_contrast",50},{"sound_volume",50},{"music_volume",100},{"text_speed",50},{"tell_mode",2},{"version",1}})out.integers.emplace(key,value);out.strings=s.strings;out.regions=s.region_overrides;out.inventory=s.inventory.slots();out.palette=s.source_palette;out.scenes=s.scene_records;
+ auto& current=out.scenes[s.scene];current.visited=true;current.members.clear();for(const auto& o:s.objects)if(o.scene==s.scene_id&&!o.removed&&o.identity!=s.scene)current.members.emplace(o.identity,1);
+ current.screen=0;current.x=s.char_x;current.y=s.char_y;current.direction=s.char_direction;current.actor_visible=s.character_visible?1:0;current.palette=s.source_palette;current.cursor=s.cursor_file();
+ for(auto& [id,record]:out.scenes){auto region=s.region_overrides.find(id);record.region=region==s.region_overrides.end()?std::string{}:region->second;}
+ return out;
 }
-Result<void> IntroRuntime::save(const std::filesystem::path& path)const {auto saved=save_state();if(!saved.has_value())return saved.error();return save_game(saved.value(),path);}
-Result<std::unique_ptr<IntroRuntime>> IntroRuntime::restore(const std::filesystem::path& data,const std::filesystem::path& path,std::function<Result<void>(const IntroRuntime&)> observe_tick) {
- auto runtime=open(data);if(!runtime.has_value())return runtime.error();auto& g=*runtime.value();std::error_code size_error;auto size=std::filesystem::file_size(path,size_error);if(size_error||size>16*1024*1024+76)return DataError{"","save",0,"missing or invalid save size"};auto bytes=read_file(path);if(!bytes.has_value())return bytes.error();
- if(bytes.value().size()>=4&&bytes.value()[0]==std::byte{0x9a}&&bytes.value()[1]==std::byte{2}&&bytes.value()[2]==std::byte{}&&bytes.value()[3]==std::byte{}){auto restored=g.restore_dos(bytes.value());if(!restored.has_value())return restored.error();return runtime;}
- auto state=load_game(path,g.state_->data_identity);if(!state.has_value())return state.error();
- try {const auto& saved=state.value().reconstruction;auto tick=saved.at("tick").get<uint64_t>();const auto& events=saved.at("events");if(tick>1000000||!events.is_array()||events.size()>100000)return DataError{"","save",0,"invalid reconstruction bounds"};g.slot_queries_=saved.value("slot_queries",std::vector<nlohmann::json>{});if(g.slot_queries_.size()>100000)return DataError{"","save",0,"slot query history exceeds bound"};g.reconstructing_=true;g.set_cooperative_fades(saved.value("cooperative_fades",false));Result<void> r;if(saved.contains("dos_base")){auto base=saved.at("dos_base").get<std::vector<uint8_t>>();r=g.restore_dos(std::as_bytes(std::span(base)));}else r=g.start();if(!r.has_value())return r.error();uint64_t previous=0;
-  for(const auto& e:events){auto at=e.at("tick").get<uint64_t>();if(at<previous||at>tick)return DataError{"","save",0,"invalid reconstruction event order"};previous=at;while(g.state_->tick<at){r=g.update();if(!r.has_value())return r.error();if(observe_tick){r=observe_tick(g);if(!r.has_value())return r.error();}}auto kind=e.at("kind").get<std::string>();auto version=e.value("input_version",1);if(version<1||version>3)return DataError{"","save",0,"invalid input semantics version"};g.legacy_input_=version==1;g.narrow_corner_=version==2;if(kind=="click")r=g.click(e.at("x").get<int>(),e.at("y").get<int>(),e.at("right").get<bool>());else if(kind=="escape")r=g.escape();else if(kind=="inventory_key")r=g.toggle_inventory();else if(kind=="text")r=g.text_input(e.at("text").get<std::string>());else if(kind=="edit_key")r=g.edit_key(e.at("key").get<std::string>());else if(kind=="cooperative_fades"){g.set_cooperative_fades(e.at("enabled").get<bool>());r={};}else if(kind=="pointer")r=g.pointer(e.at("x").get<int>(),e.at("y").get<int>());else return DataError{"","save",0,"unknown reconstruction input"};if(!r.has_value())return r.error();g.legacy_input_=g.narrow_corner_=false;}
-  while(g.state_->tick<tick){r=g.update();if(!r.has_value())return r.error();if(observe_tick){r=observe_tick(g);if(!r.has_value())return r.error();}}
-  if(saved.contains("pointer")){r=g.pointer(saved.at("pointer").at(0).get<int>(),saved.at("pointer").at(1).get<int>());if(!r.has_value())return r.error();}
-  if(g.slot_query_cursor_!=g.slot_queries_.size())return DataError{"","save",0,"unused slot query history"};g.reconstructing_=false;
-  if(!g.can_save()||nlohmann::json::parse(canonical_checkpoint(g.checkpoint()))!=saved.at("checkpoint"))return DataError{"","save",0,"reconstructed gameplay state differs from saved state"};
- }catch(const nlohmann::json::exception&){return DataError{"","save",0,"invalid reconstruction fields"};}return runtime;
+Result<void> IntroRuntime::save(const std::filesystem::path& path)const {
+ auto state=dos_state();if(!state.has_value())return state.error();auto bytes=write_dos_save(state.value());if(!bytes.has_value())return bytes.error();return write_file_atomic(path,bytes.value());
+}
+Result<std::unique_ptr<IntroRuntime>> IntroRuntime::restore(const std::filesystem::path& data,const std::filesystem::path& path) {
+ auto runtime=open(data);if(!runtime.has_value())return runtime.error();std::error_code size_error;auto size=std::filesystem::file_size(path,size_error);if(size_error||size>1024*1024)return DataError{"","save",0,"missing or invalid save size"};
+ auto bytes=read_file(path);if(!bytes.has_value())return bytes.error();auto restored=runtime.value()->restore_dos(bytes.value());if(!restored.has_value())return restored.error();return runtime;
 }
 Result<void> IntroRuntime::restore_dos(ByteView bytes) {
  auto parsed=parse_dos_save(bytes);if(!parsed.has_value())return parsed.error();const auto& saved=parsed.value();
@@ -197,17 +216,21 @@ Result<void> IntroRuntime::restore_dos(ByteView bytes) {
  s.strings=saved.strings;s.integers=saved.integers;s.inventory=Inventory{};
  // The original stores raw buffers after each NUL; only the item name and count are semantic.
  for(unsigned n=0;n<35;++n){unsigned i=n==0?17:n<=17?n-1:n;const auto& slot=saved.inventory[i];for(uint32_t j=0;j<slot.count;++j){auto added=s.inventory.add(slot.item,i);if(!added.has_value())return added;}}
- s.initialized_objects.clear();s.removed_objects.clear();s.extra_objects.clear();s.region_overrides=saved.regions;
- for(const auto& [scene,snapshot]:saved.scenes){if(!snapshot.region.empty())s.region_overrides[scene]=snapshot.region;if(!snapshot.visited)continue;s.initialized_objects.insert(scene);auto& members=s.dos_members[scene];for(const auto& [id,count]:snapshot.members){s.initialized_objects.insert(id);if(count>0){members.insert(id);s.extra_objects[scene].insert(id);}else s.removed_objects[scene].insert(id);}}
+ s.initialized_objects.clear();s.removed_objects.clear();s.extra_objects.clear();s.region_overrides=saved.regions;s.character_file=saved.character_file;
+ for(const auto& [scene,snapshot]:saved.scenes){if(!snapshot.region.empty())s.region_overrides[scene]=snapshot.region;if(!snapshot.visited)continue;s.initialized_objects.insert(scene);auto& members=s.dos_members[scene];for(const auto& [id,count]:snapshot.members){s.initialized_objects.insert(id);if(count>0){members.insert(id);if(s.db.read(id).has_value())s.extra_objects[scene].insert(id);}else s.removed_objects[scene].insert(id);}}
  auto chr=read_file(s.data/saved.character_file);if(!chr.has_value())return chr.error();auto definition=load_character(chr.value(),saved.character_file);if(!definition.has_value())return definition.error();s.character=std::move(definition.value());
  s.user_locks=s.inventory_locks=s.character_locks=0;s.character_visible=saved.character_visible;s.char_x=saved.x;s.char_y=saved.y;s.char_direction=saved.direction;s.char_frame=0;
  s.pending=saved.scene;auto transitioned=settle();if(!transitioned.has_value())return transitioned;
+ // Leaving the boot screen above recorded it; the saved records describe every other screen.
+ s.scene_records=saved.scenes;s.scene_records.erase(saved.scene);
+ // DOS restores the screen cursor from the saved screen record.
+ if(auto file=saved.scenes.at(saved.scene).cursor;!file.empty()&&s.cursor_file()!=file)for(const auto& entry:s.db.entries())if(entry.size<=64){auto named=s.alias(entry.name);if(named.has_value()&&named.value()==file){s.cursor=entry.name;break;}}
  // Scene declarations rebuild handlers and surfaces; DOS resumes the actor at the saved placement.
  s.char_x=saved.x;s.char_y=saved.y;s.char_direction=saved.direction;s.char_frame=0;s.character_visible=saved.character_visible;s.character_locks=1-saved.movement_depth;
  // DOS 0x1e116 associates an outside actor at the scene's walk-region anchor.
  if(s.character_visible&&s.walk_region&&!s.walk_region->contains(s.char_x,s.char_y)){s.char_x=s.walk_region->x;s.char_y=s.walk_region->y;}
  s.source_palette=s.render_palette=saved.palette;for(size_t i=0;i<256;++i)for(size_t component=0;component<3;++component)s.palette[i][component]=saved.palette[i][component]/4;
- s.tick=0;s.inputs.clear();s.trace.clear();s.dos_base.clear();for(auto b:bytes)s.dos_base.push_back(std::to_integer<uint8_t>(b));return {};
+ s.tick=0;s.trace.clear();return {};
 }
 Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
  auto& s=*state_;auto fail=[&](std::string why)->Result<StepOutcome>{return DataError{"",p.object->name,ins.offset,std::move(why)};};
@@ -224,15 +247,11 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
  auto arg=[&](unsigned from_bottom){return p.stack[p.stack.size()-count+from_bottom];};
  auto name=[&](unsigned n)->Result<std::string>{return s.resource(p,arg(n));};
  auto pop=[&]{p.stack.resize(p.stack.size()-count);};
- constexpr std::string_view empty_name="Tato pozice zat\xA1m nem\xA0 jm\x82no";
  if(op==151||op==152||op==155||op==156){
-  int slot=arg(0);if(slot<0||slot>9)return fail("save slot outside0..9");if(save_directory_.empty()&&!reconstructing_)return fail("save directory is not configured");
-  if(op==155||op==156){auto path=save_directory_/("slot-"+std::to_string(slot)+".hls");
-   if(!s.save_names.contains(slot)){std::vector<uint8_t> bytes(empty_name.begin(),empty_name.end());
-    try{if(reconstructing_){if(slot_query_cursor_>=slot_queries_.size()||slot_queries_[slot_query_cursor_].at("slot")!=slot)return fail("slot query history differs");bytes=slot_queries_[slot_query_cursor_++].at("bytes").get<std::vector<uint8_t>>();}
-     else {if(std::filesystem::exists(path)){auto saved=load_game(path,s.data_identity);if(!saved.has_value())return saved.error();bytes=saved.value().reconstruction.value("slot_name",bytes);}slot_queries_.push_back({{"slot",slot},{"bytes",bytes}});}
-    }catch(const nlohmann::json::exception&){return fail("invalid save slot name");}if(bytes.size()>50)return fail("save slot name exceeds50 glyphs");s.save_names[slot]=std::move(bytes);}
-   if(op==156){if(s.name_editor)return fail("save name editor already active");if(!o.picture)return fail("save name editor has no label surface");auto& current=s.save_names[slot];bool placeholder=current==std::vector<uint8_t>(empty_name.begin(),empty_name.end());s.name_editor=State::NameEditor{&o,&p,slot,placeholder?std::vector<uint8_t>{}:current,current.size()};auto shown=s.name_surface(o,s.name_editor->bytes);if(!shown.has_value())return shown.error();p.state=ProcessState::waiting;}
+  int slot=arg(0);if(slot<0||slot>9)return fail("save slot outside0..9");if(save_directory_.empty())return fail("save directory is not configured");
+  if(op==155||op==156){
+   if(!s.save_names.contains(slot)){auto bytes=read_save_names(save_directory_)[size_t(slot)];if(bytes.empty()||!std::filesystem::exists(dos_save_path(save_directory_,slot)))bytes.assign(empty_save_name.begin(),empty_save_name.end());s.save_names[slot]=std::move(bytes);}
+   if(op==156){if(s.name_editor)return fail("save name editor already active");if(!o.picture)return fail("save name editor has no label surface");auto& current=s.save_names[slot];bool placeholder=current==std::vector<uint8_t>(empty_save_name.begin(),empty_save_name.end());s.name_editor=State::NameEditor{&o,&p,slot,placeholder?std::vector<uint8_t>{}:current,current.size()};auto shown=s.show_name_editor(true);if(!shown.has_value())return shown.error();p.state=ProcessState::waiting;}
    else {auto r=s.name_surface(o,s.save_names[slot]);if(!r.has_value())return r.error();}
   }else {if(op==151)s.load_slot=slot;else s.save_slot=slot;p.state=ProcessState::terminated;}
   pop();return p.state==ProcessState::waiting?StepOutcome::yielded:p.state==ProcessState::terminated?StepOutcome::terminated:StepOutcome::running;
@@ -276,7 +295,7 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
  else if(op==69){s.near_z=arg(0);s.far_z=arg(1);pop();}
  else if(op==72){auto identity=name(0),source=name(1);if(!identity.has_value())return identity.error();if(!source.has_value())return source.error();pop();if(!s.rebuilding_scene&&s.dos_members.contains(s.scene))s.dos_members[s.scene].insert(identity.value());auto r=s.object(source.value(),identity.value());if(!r.has_value())return r.error();}
  else if(op==73){auto n=name(0);if(!n.has_value())return n.error();pop();for(auto& item:s.objects)if(item.scene==s.scene_id&&item.identity==n.value()&&!item.removed){item.removed=true;if(s.dos_members.contains(s.scene))s.dos_members[s.scene].erase(item.identity);if(item.region||s.extra_objects[s.scene].contains(item.identity))s.removed_objects[s.scene].insert(item.identity);s.extra_objects[s.scene].erase(item.identity);for(auto& t:s.tasks)if(t.process&&t.process.get()!=&p&&t.owner==&item)t.process->state=ProcessState::terminated;break;}if(p.state==ProcessState::terminated)return StepOutcome::terminated;}
- else if(op==80){auto id=name(0),file=name(1),script=name(2);if(!id.has_value())return id.error();if(!file.has_value())return file.error();if(!script.has_value())return script.error();auto filename=s.alias(file.value());if(!filename.has_value())return filename.error();auto bytes=read_file(s.data/filename.value());if(!bytes.has_value())return bytes.error();auto chr=load_character(bytes.value(),filename.value());if(!chr.has_value())return chr.error();s.character=std::move(chr.value());s.character_id=id.value();pop();auto r=s.object(script.value());if(!r.has_value())return r.error();}
+ else if(op==80){auto id=name(0),file=name(1),script=name(2);if(!id.has_value())return id.error();if(!file.has_value())return file.error();if(!script.has_value())return script.error();auto filename=s.alias(file.value());if(!filename.has_value())return filename.error();auto bytes=read_file(s.data/filename.value());if(!bytes.has_value())return bytes.error();auto chr=load_character(bytes.value(),filename.value());if(!chr.has_value())return chr.error();s.character=std::move(chr.value());s.character_file=filename.value();s.character_id=id.value();pop();auto r=s.object(script.value());if(!r.has_value())return r.error();}
  else if(op==79){auto id=name(0),region=name(1);if(!id.has_value())return id.error();if(!region.has_value())return region.error();auto r=s.region(region.value());if(!r.has_value())return r.error();auto item=std::find_if(s.objects.begin(),s.objects.end(),[&](const auto& item){return !item.removed&&item.identity==id.value();});if(item!=s.objects.end()){item->region=std::move(r.value());if(item->scene==s.scene_id&&item->identity==s.scene)s.walk_region=item->region;}else {auto b=s.db.read(id.value());if(!b.has_value())return b.error();auto target=load_object(b.value(),id.value());if(!target.has_value())return target.error();}s.region_overrides[id.value()]=region.value();pop();}
  else if(op==83){auto r=s.begin_speech_animation(arg(1),false);if(!r.has_value())return r.error();pop();}
  else if(op==82){auto id=name(0),script=name(1);if(!id.has_value())return id.error();if(!script.has_value())return script.error();if(id.value()!=s.character_id)return fail("character identity is not loaded");pop();auto r=s.object(script.value());if(!r.has_value())return r.error();}
@@ -300,18 +319,24 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
   uint32_t mask=0;if(op==121){auto n=name(2);if(!n.has_value())return n.error();auto v=s.vm.globals().find(n.value());if(v==s.vm.globals().end())return fail("choice mask global is undefined");mask=uint32_t(v->second);}
   auto b=s.db.read(text.value());if(!b.has_value())return b.error();auto raw=decrypt_game_text(b.value());std::vector<uint8_t> bytes;for(auto c:raw)bytes.push_back(std::to_integer<uint8_t>(c));
   auto choices=make_choice_text(bytes,mask);if(!choices.has_value())return choices.error();auto overlay=make_text_overlay(s.font,choices.value().text,x,y);if(!overlay.has_value())return overlay.error();
-  auto plain=decode_game_text(std::as_bytes(std::span(choices.value().text)),GameEncoding::kamenicky);if(!plain.has_value())return plain.error();s.dialogue_text=plain.value();s.choices=std::move(choices.value());s.dialogue=std::move(overlay.value());s.dialogue_waiter=&p;p.state=ProcessState::waiting;pop();return StepOutcome::yielded;
+  auto plain=decode_game_text(std::as_bytes(std::span(choices.value().text)),GameEncoding::kamenicky);if(!plain.has_value())return plain.error();s.dialogue_text=plain.value();s.choices=std::move(choices.value());s.dialogue=std::move(overlay.value());s.dialogue_hidden=false;s.dialogue_waiter=&p;p.state=ProcessState::waiting;pop();return StepOutcome::yielded;
  }
  else if(op==115||op==116||op==117) {
   if(s.dialogue_waiter)return fail("overlapping intro dialogue");auto text=name(1);if(!text.has_value())return text.error();int x=150,y=100;
   if(arg(0)!=-1){auto n=name(0);if(!n.has_value())return n.error();auto r=s.region(n.value());if(!r.has_value())return r.error();x=r.value().x;y=r.value().y;}
   auto b=s.db.read(text.value());if(!b.has_value())return b.error();auto raw=decrypt_game_text(b.value());auto plain=decode_game_text(raw,GameEncoding::kamenicky);if(!plain.has_value())return plain.error();
-  std::vector<uint8_t> bytes;for(auto c:raw)bytes.push_back(std::to_integer<uint8_t>(c));auto overlay=make_text_overlay(s.font,bytes,x,y);if(!overlay.has_value())return overlay.error();
+  std::vector<uint8_t> bytes;for(auto c:raw)bytes.push_back(std::to_integer<uint8_t>(c));
+  // Op 116 (DOS case 116) lays the text out through the same line mask as masked choices (0x3014f), taken from a global.
+  if(op==116){auto n=name(2);if(!n.has_value())return n.error();auto v=s.vm.globals().find(n.value());if(v==s.vm.globals().end())return fail("text mask global is undefined");auto lines=make_choice_text(bytes,uint32_t(v->second));if(!lines.has_value())return lines.error();bytes=std::move(lines.value().text);
+   auto masked=decode_game_text(std::as_bytes(std::span(bytes)),GameEncoding::kamenicky);if(!masked.has_value())return masked.error();plain=std::move(masked);}
+  auto overlay=make_text_overlay(s.font,bytes,x,y);if(!overlay.has_value())return overlay.error();
   uint64_t voice=0;s.dialogue_ticks=0;
-  if(op==117){auto sound=name(2);if(!sound.has_value())return sound.error();auto file=s.alias(sound.value());if(!file.has_value())return file.error();auto sample=s.archive.read(file.value());if(!sample.has_value())return sample.error();auto pcm=decode_wav(sample.value());if(!pcm.has_value())return pcm.error();prepare_dos_sample(pcm.value(),s.integers.at("music_volume"));auto played=s.mixer.play(pcm.value(),1,0,1,100,s.dialogue_voice);if(!played.has_value())return played.error();voice=played.value();}
-  else {if(op==116)return fail("filtered timed speech is not yet bound");int speed=s.integers.contains("text_speed")?s.integers.at("text_speed"):70;static constexpr int rates[]={0,631,398,251,158,100,63,40,25,16,10};if(speed<10||speed>100)return fail("invalid text speed");size_t length=std::find(bytes.begin(),bytes.end(),0)-bytes.begin();s.dialogue_ticks=unsigned(std::max(size_t(20),length)*size_t(rates[speed/10])/41+1);}
+  // tell_mode bit 1 shows subtitles and bit 2 plays voices; a line without a voice always shows its text.
+  int tell_mode=s.integers.contains("tell_mode")?s.integers.at("tell_mode"):3;
+  if(op==117&&(tell_mode&2)){auto sound=name(2);if(!sound.has_value())return sound.error();auto file=s.alias(sound.value());if(!file.has_value())return file.error();auto sample=s.archive.read(file.value());if(!sample.has_value())return sample.error();auto pcm=decode_wav(sample.value());if(!pcm.has_value())return pcm.error();prepare_dos_sample(pcm.value(),s.integers.at("music_volume"));auto played=s.mixer.play(pcm.value(),1,0,1,100,s.dialogue_voice);if(!played.has_value())return played.error();voice=played.value();}
+  else {int speed=s.integers.contains("text_speed")?s.integers.at("text_speed"):70;static constexpr int rates[]={0,631,398,251,158,100,63,40,25,16,10};if(speed<10||speed>100)return fail("invalid text speed");size_t length=std::find(bytes.begin(),bytes.end(),0)-bytes.begin();s.dialogue_ticks=unsigned(std::max(size_t(20),length)*size_t(rates[speed/10])/41+1);}
   auto direction=speech_animation_direction(s.char_direction,s.suppress_speech);if(direction){auto r=s.begin_speech_animation(*direction,true);if(!r.has_value())return r.error();}else if(s.speech_loop)s.speech_direction.reset();
-  s.dialogue=std::move(overlay.value());s.dialogue_text=plain.value();s.dialogue_voice=voice;s.dialogue_waiter=&p;p.state=ProcessState::waiting;pop();return StepOutcome::yielded;
+  s.dialogue=std::move(overlay.value());s.dialogue_hidden=voice&&!(tell_mode&1);s.dialogue_text=plain.value();s.dialogue_voice=voice;s.dialogue_waiter=&p;p.state=ProcessState::waiting;pop();return StepOutcome::yielded;
  }
  else if(op==95||op==96){auto n=name(0);if(!n.has_value())return n.error();auto v=s.vm.globals().find(n.value());if(v==s.vm.globals().end())return fail("sample control global is undefined");auto r=s.vm.event_global(n.value(),v->second|(op==95?2:4));if(!r.has_value())return r.error();pop();}
  else if(op==93||op==94)s.user_locks+=op==93?1:-1;
@@ -347,8 +372,8 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
  else if(op==164){auto n=name(0);if(!n.has_value())return n.error();auto i=s.integers.find(n.value());auto value=i==s.integers.end()?0:i->second;pop();p.stack.push_back(value);}
  else if(op==133||op==134||op==135){auto id=name(1);if(!id.has_value())return id.error();std::string screen=s.scene;if(arg(0)!=-1){auto n=name(0);if(!n.has_value())return n.error();screen=n.value();}
   if(op==135){int exists=0;if(screen==s.scene){for(auto& item:s.objects)if(item.scene==s.scene_id&&!item.removed&&(!item.inventory_only||s.inventory_open)&&item.identity==id.value())exists=1;}else if(s.strings.contains("inventory_scr")&&screen==s.strings.at("inventory_scr")){auto items=s.inventory.items();exists=std::find(items.begin(),items.end(),id.value())!=items.end();}else exists=s.extra_objects[screen].contains(id.value())&&!s.removed_objects[screen].contains(id.value());pop();p.stack.push_back(exists);}
-  else if(op==133){if(s.dos_members.contains(screen))s.dos_members[screen].insert(id.value());s.removed_objects[screen].erase(id.value());s.extra_objects[screen].insert(id.value());pop();if(screen==s.scene){auto r=s.object(id.value());if(!r.has_value())return r.error();}}
-  else {if(s.dos_members.contains(screen))s.dos_members[screen].erase(id.value());s.removed_objects[screen].insert(id.value());s.extra_objects[screen].erase(id.value());if(screen==s.scene)for(auto& item:s.objects)if(!item.removed&&item.identity==id.value()){item.removed=true;for(auto& t:s.tasks)if(t.process&&t.process.get()!=&p&&t.owner==&item)t.process->state=ProcessState::terminated;}pop();}
+  else if(op==133){if(s.dos_members.contains(screen))s.dos_members[screen].insert(id.value());if(screen!=s.scene&&s.scene_records.contains(screen))s.scene_records[screen].members.emplace(id.value(),1);s.removed_objects[screen].erase(id.value());s.extra_objects[screen].insert(id.value());pop();if(screen==s.scene){auto r=s.object(id.value());if(!r.has_value())return r.error();}}
+  else {if(s.dos_members.contains(screen))s.dos_members[screen].erase(id.value());if(s.scene_records.contains(screen))s.scene_records[screen].members.erase(id.value());s.removed_objects[screen].insert(id.value());s.extra_objects[screen].erase(id.value());if(screen==s.scene)for(auto& item:s.objects)if(!item.removed&&item.identity==id.value()){item.removed=true;for(auto& t:s.tasks)if(t.process&&t.process.get()!=&p&&t.owner==&item)t.process->state=ProcessState::terminated;}pop();}
  }
  else if(op==141||op==142){auto n=name(0);if(!n.has_value())return n.error();auto r=s.region(n.value());if(!r.has_value())return r.error();int value=op==141?r.value().x:r.value().y;pop();p.stack.push_back(value);}
  else if(op==143||op==144||op==145){int value=op==143?(s.speech_direction?int(s.speech_frame):-1):op==144?s.char_x:s.char_y;pop();p.stack.push_back(value);}
@@ -370,6 +395,7 @@ Result<void> IntroRuntime::mix_device_audio(std::span<float> output){
 }
 Result<void> IntroRuntime::update() {
  auto& s=*state_;++s.tick;
+ if(s.name_editor){bool on=(s.tick-s.name_editor->blink_from)/16%2==0;if(on!=s.name_editor->cursor){s.name_editor->cursor=on;auto r=s.show_name_editor();if(!r.has_value())return r;}}
  if(!s.fade&&!s.inventory_open&&s.walk&&!s.walk->arrived()){s.walk->advance();s.char_x=s.walk->x();s.char_y=s.walk->y();if(s.char_direction!=s.walk->direction())s.char_frame=0;else ++s.char_frame;s.char_direction=s.walk->direction();if(s.walk->arrived()){if(s.final_direction>=0)s.char_direction=s.final_direction;s.char_frame=0;if(s.arrival_waiter){s.arrival_waiter->state=ProcessState::ready;s.arrival_waiter=nullptr;}}}
  s.audio_fraction+=48000;size_t frames=s.audio_fraction/35;s.audio_fraction%=35;s.audio.resize(frames*2);s.mixer.mix(s.audio);std::vector<float> music(s.audio.size());auto cd=s.cd.mix(music,48000);if(!cd.has_value())return cd;
  for(size_t i=0;i<s.audio.size();++i)s.audio[i]=std::clamp(s.audio[i]+music[i],-1.f,1.f);
@@ -433,21 +459,19 @@ int IntroRuntime::inventory_corner()const{
 }
 Result<void> IntroRuntime::toggle_inventory(){
  if(!inventory_corner())return {};
- if(can_save()){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
- auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","inventory_key"},{"input_version",input_version()}});
+ auto& s=*state_;
  if(s.inventory_open){s.close_inventory();return {};}
  return open_inventory();
 }
 const std::string& IntroRuntime::selected_item()const{return state_->selected;}
 Result<void> IntroRuntime::click(int x,int y,bool right){
- if(!legacy_input_&&right&&state_->scene=="14rf")return escape();
- if(can_save()){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
- auto& s=*state_;if(s.name_editor||s.fade)return {};s.inputs.push_back({{"tick",s.tick},{"kind","click"},{"input_version",input_version()},{"x",x},{"y",y},{"right",right}});s.pointer_x=x;s.pointer_y=y;if(x<0||x>=640||y<0||y>=480)return DataError{"",s.scene,0,"click outside logical canvas"};
+ if(right&&state_->scene=="14rf")return escape();
+ auto& s=*state_;if(s.name_editor||s.fade)return {};s.pointer_x=x;s.pointer_y=y;if(x<0||x>=640||y<0||y>=480)return DataError{"",s.scene,0,"click outside logical canvas"};
  if(s.dialogue_waiter){if(s.choices){auto id=choice_at(*s.choices,*s.dialogue,x,y);if(!id)return {};if(s.dialogue_waiter->stack.size()>=100)return DataError{"",s.scene,0,"choice result stack overflow"};s.dialogue_waiter->stack.push_back(*id);s.choices.reset();}else s.mixer.stop(s.dialogue_voice);s.dialogue_waiter->state=ProcessState::ready;s.dialogue_waiter=nullptr;s.dialogue.reset();s.dialogue_text.clear();if(s.speech_loop)s.speech_direction.reset();return {};}
  if(s.user_locks>0)return {};
- // Input version 3 widens the original 3x3 corner to the collision-free square; older inputs keep 3x3.
+ // The original 3x3 corner is widened to the largest collision-free square.
  // Objects are hit first, so only free pixels of the 20x20 corner reach the inventory test.
- int corner=input_version()>=3&&inventory_corner()?(s.inventory_open?18:20):4;bool in_corner=x<corner&&y<corner;
+ int corner=inventory_corner()?(s.inventory_open?18:20):4;bool in_corner=x<corner&&y<corner;
  auto use_selected=[&](State::Object* target)->Result<void>{
   auto selected=s.selected;auto held=s.object(selected);if(!held.has_value())return held.error();State::Object* owner=held.value();std::optional<ScriptHandler> handler;
   if(target){auto h=target->use_handlers.find(selected);auto fallback=target->handlers.find(57);
@@ -480,29 +504,35 @@ Result<void> IntroRuntime::click(int x,int y,bool right){
 
 bool IntroRuntime::editing_save_name()const{return state_->name_editor.has_value();}
 Result<void> IntroRuntime::text_input(std::string_view text){auto& s=*state_;if(!s.name_editor)return {};auto bytes=name_bytes(text);if(!bytes.has_value())return bytes.error();auto& e=*s.name_editor;
- s.inputs.push_back({{"tick",s.tick},{"kind","text"},{"text",text}});e.legacy_length+=std::min(bytes.value().size(),50-std::min<size_t>(50,e.legacy_length));auto count=std::min(bytes.value().size(),50-e.bytes.size());e.bytes.insert(e.bytes.end(),bytes.value().begin(),bytes.value().begin()+count);return s.name_surface(*e.owner,e.bytes);
+ e.legacy_length+=std::min(bytes.value().size(),50-std::min<size_t>(50,e.legacy_length));auto count=std::min(bytes.value().size(),50-e.bytes.size());e.bytes.insert(e.bytes.end(),bytes.value().begin(),bytes.value().begin()+count);return s.show_name_editor(true);
 }
 Result<void> IntroRuntime::edit_key(std::string_view key){auto& s=*state_;if(!s.name_editor)return {};if(key!="backspace"&&key!="enter"&&key!="escape")return DataError{"","save name",0,"unknown editor key"};auto& e=*s.name_editor;
- if(key!="backspace"&&e.waiter->stack.size()>=100)return DataError{"","save name",0,"editor result stack overflow"};s.inputs.push_back({{"tick",s.tick},{"kind","edit_key"},{"key",key}});
- if(key=="backspace"){if(!e.bytes.empty())e.bytes.pop_back();if(e.legacy_length)--e.legacy_length;return s.name_surface(*e.owner,e.bytes);}
+ if(key!="backspace"&&e.waiter->stack.size()>=100)return DataError{"","save name",0,"editor result stack overflow"};
+ if(key=="backspace"){if(!e.bytes.empty())e.bytes.pop_back();if(e.legacy_length)--e.legacy_length;return s.show_name_editor(true);}
  bool accepted=key=="enter"&&e.legacy_length>0;if(accepted&&!e.bytes.empty())s.save_names[e.slot]=e.bytes;auto r=s.name_surface(*e.owner,s.save_names[e.slot]);if(!r.has_value())return r;
  e.waiter->stack.push_back(accepted?1:0);e.waiter->state=ProcessState::ready;s.name_editor.reset();return {};
 }
 Result<void> IntroRuntime::escape(){
  if(editing_save_name())return edit_key("escape");
- bool gameplay=can_save();if(gameplay){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
- auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","escape"},{"input_version",input_version()}});auto i=s.strings.find("escape_scr");
- if(!legacy_input_&&s.inventory_open){s.close_inventory();return {};}
+ bool gameplay=can_save();
+ auto& s=*state_;auto i=s.strings.find("escape_scr");
+ if(s.inventory_open){s.close_inventory();return {};}
  // Temporary screens return to their caller even before escape_scr is set.
- if((i==s.strings.end()||i->second.empty())&&(legacy_input_||screens_.empty()))return {};
- if(!screens_.empty()&&(!legacy_input_||i->second==s.scene||i->second==screens_.back()->scene))s.return_screen=true;
+ if((i==s.strings.end()||i->second.empty())&&screens_.empty())return {};
+ if(!screens_.empty())s.return_screen=true;
  // The original main menu suspends gameplay even when saving is disallowed.
  else if(i->second!=s.scene){if(gameplay||i->second=="126y")s.pending_overlay=i->second;else s.pending=i->second;}
  return settle();
 }
+// F2/F3 in HL.EXE (0x120d4/0x120e9) open save_scr/load_scr as temporary screens under the Esc menu's own check (0x2be92).
+Result<void> IntroRuntime::slot_screen(bool save){
+ if(editing_save_name()||!screens_.empty()||!can_save())return {};
+ auto& s=*state_;auto i=s.strings.find(save?"save_scr":"load_scr");if(i==s.strings.end()||i->second.empty()||i->second==s.scene)return {};
+ s.pending_overlay=i->second;return settle();
+}
 Result<std::vector<uint8_t>> IntroRuntime::rgba()const {auto surfaces=render_surfaces();if(!surfaces.has_value())return surfaces.error();return flatten_surfaces(std::move(surfaces.value()));}
 Result<std::vector<uint8_t>> IntroRuntime::indexed()const {std::vector<uint8_t> indices;auto surfaces=render_surfaces_impl(false,&indices);if(!surfaces.has_value())return surfaces.error();return indices;}
-Result<void> IntroRuntime::pointer(int x,int y){if(x<0||x>=640||y<0||y>=480)return DataError{"","pointer",0,"intro pointer outside logical canvas"};auto& s=*state_;if(s.inventory_open){nlohmann::json event{{"tick",s.tick},{"kind","pointer"},{"x",x},{"y",y}};if(!s.inputs.empty()&&s.inputs.back().at("kind")=="pointer"&&s.inputs.back().at("tick")==s.tick)s.inputs.back()=std::move(event);else s.inputs.push_back(std::move(event));}s.pointer_x=x;s.pointer_y=y;return {};}
+Result<void> IntroRuntime::pointer(int x,int y){if(x<0||x>=640||y<0||y>=480)return DataError{"","pointer",0,"intro pointer outside logical canvas"};auto& s=*state_;s.pointer_x=x;s.pointer_y=y;return {};}
 Result<std::vector<RenderSurface>> IntroRuntime::render_surfaces(bool packed)const {
  return render_surfaces_impl(packed,nullptr);
 }
@@ -561,7 +591,7 @@ Result<std::vector<RenderSurface>> IntroRuntime::render_surfaces_impl(bool packe
   }out.push_back(std::move(surface));
  }
  if(hover&&!hover->label.empty()&&!s.dialogue){auto pixels=render_font(s.font,hover->label);if(!pixels.has_value())return pixels.error();int width=int(hover->label.size())*8;RenderSurface label{320-int((hover->label.size()+1)/2)*8,462,-90,width,16,{}};size_t p=0;for(auto bit:pixels.value()){if(indices&&bit){int x=label.x+int(p%width),y=label.y+int(p/width);if(x>=0&&x<640&&y>=0&&y<480)(*indices)[size_t(y)*640+x]=1;}++p;for(auto v:packed?s.render_palette[1]:s.palette[1])label.rgba.push_back(packed?v:expand_dac(v));label.rgba.push_back(!packed&&bit?255:0);}if(packed){label.text_color=s.render_palette[1];for(size_t i=0;i<hover->label.size();++i)label.glyphs.push_back({hover->label[i],label.x+int(i)*8,label.y});}out.push_back(std::move(label));}
- if(s.dialogue) {
+ if(s.dialogue&&!s.dialogue_hidden) {
   const auto& t=*s.dialogue;auto canvas=graph.compose(t.x,t.y,t.width,t.height);if(!canvas.has_value())return canvas.error();RenderSurface text{t.x,t.y,-8,t.width,t.height,{}};text.rgba.reserve(size_t(t.width)*t.height*4);
   for(int y=0;y<t.height;++y)for(int x=0;x<t.width;++x){uint8_t pixel=canvas.value()[size_t(y)*t.width+x];auto index=!packed&&t.mask[size_t(y)*t.width+x]?1:dialogue_shade_source_index(s.source_palette,pixel);if(indices&&t.x+x>=0&&t.x+x<640&&t.y+y>=0&&t.y+y<480)(*indices)[size_t(t.y+y)*640+t.x+x]=uint8_t(index);for(auto v:packed?s.render_palette[index]:s.palette[index])text.rgba.push_back(packed?v:expand_dac(v));text.rgba.push_back(255);}if(packed){text.glyphs=t.glyphs;text.text_color=s.render_palette[1];}out.push_back(std::move(text));
  }
@@ -583,7 +613,7 @@ Result<std::vector<RenderSurface>> IntroRuntime::render_surfaces_impl(bool packe
 #endif
  return out;
 }
-PaletteView IntroRuntime::palette_view()const{return {state_->render_palette,state_->palette,state_->screen_visible};}
+PaletteView IntroRuntime::palette_view()const{const auto& s=*state_;auto setting=[&](const char* key){auto i=s.integers.find(key);return i==s.integers.end()?50:i->second;};return {s.render_palette,s.palette,s.screen_visible,setting("gfx_bright"),setting("gfx_contrast")};}
 std::vector<LogicalPoint> IntroRuntime::active_areas()const {
  const auto& s=*state_;std::vector<LogicalPoint> out;
  if(s.inventory_open||s.user_locks>0||s.dialogue_waiter||s.name_editor)return out;
@@ -602,7 +632,7 @@ nlohmann::json IntroRuntime::geometry()const {
  for(const auto& task:s.tasks)if(task.process&&task.process->state!=ProcessState::terminated)j["active_processes"]=j["active_processes"].get<int>()+1;
  for(const auto& o:s.objects)if(o.scene==s.scene_id&&!o.removed){nlohmann::json item{{"id",o.identity},{"z",o.z},{"anchor",{o.x,o.y}},{"inventory_only",o.inventory_only},{"inventory_active",s.inventory_open&&(o.inventory_only||std::any_of(s.tasks.begin(),s.tasks.end(),[&](const auto& task){return task.owner==&o&&task.inventory_context;}))},{"region_offset",{o.region_x,o.region_y}},{"contours",nlohmann::json::array()}};if(o.region){ByteReader r(o.region->shape);for(unsigned c=0;c<o.region->flags;++c){auto n=r.u16le().value();nlohmann::json points=nlohmann::json::array();for(unsigned i=0;i<n;++i){auto x=r.u16le().value(),y=r.u16le().value();r.u16le();points.push_back({std::bit_cast<int16_t>(x),std::bit_cast<int16_t>(y)});}item["contours"].push_back(points);}}j["objects"].push_back(item);}return j;
 }
-Result<void> IntroRuntime::load(const std::filesystem::path& path){auto restored=restore(state_->data,path);if(!restored.has_value())return restored.error();auto cooperative=state_->cooperative_fades;auto presenter=std::move(state_->palette_presenter);state_.swap(restored.value()->state_);slot_queries_=std::move(restored.value()->slot_queries_);slot_query_cursor_=0;menu_save_.reset();screens_.clear();state_->services=this;state_->palette_presenter=std::move(presenter);set_cooperative_fades(cooperative);return {};}
+Result<void> IntroRuntime::load(const std::filesystem::path& path){auto restored=restore(state_->data,path);if(!restored.has_value())return restored.error();auto cooperative=state_->cooperative_fades;auto presenter=std::move(state_->palette_presenter);state_.swap(restored.value()->state_);screens_.clear();state_->services=this;state_->palette_presenter=std::move(presenter);set_cooperative_fades(cooperative);return {};}
 Checkpoint IntroRuntime::checkpoint()const {
  const auto& s=*state_;Checkpoint c{s.tick,s.scene};c.variables=s.vm.globals();c.inventory=s.inventory.items();c.active_dialogue=s.dialogue?nlohmann::json(s.dialogue_text):nlohmann::json(nullptr);c.animation_positions=nlohmann::json::array();for(const auto& a:s.animations)if(!a.done)c.animation_positions.push_back({{"resource",a.decoder.resource()},{"frame",a.frame.frame_index}});if(s.character&&s.character_visible){const auto& definition=s.speech_direction?s.speech_character->directions.at(size_t(*s.speech_direction)):s.character->directions.at(size_t(s.char_direction));c.animation_positions.push_back({{"character",s.character_id},{"resource",definition.file},{"frame",(s.speech_direction?s.speech_frame:s.char_frame)%definition.offsets.size()},{"x",s.char_x},{"y",s.char_y},{"direction",s.char_direction},{"moving",s.walk&&!s.walk->arrived()}});}
  c.audio_positions={{"track",s.cd.track()},{"sample",s.cd.position()},{"playing",s.cd.playing()},{"voices",nlohmann::json::array()}};
