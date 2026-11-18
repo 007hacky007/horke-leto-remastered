@@ -281,8 +281,18 @@ fs::path update_game(const fs::path& app, const Emit& emit) {
         fs::rename(app, old);
         fs::rename(stage, app);
     } catch (...) {
-        for (auto& name : moved) { std::error_code ec; fs::rename(to / name, from / name, ec); }
-        if (!fs::exists(app) && fs::exists(old)) { std::error_code ec; fs::rename(old, app, ec); }
+        // Put the old game back first, so its Resources folder exists again, then return what was moved.
+        std::error_code ec;
+        if (!fs::exists(app) && fs::exists(old)) fs::rename(old, app, ec);
+        bool restored = fs::exists(from);
+        for (auto& name : moved) {
+            std::error_code move_ec;
+            if (restored) fs::rename(to / name, from / name, move_ec);
+            if (!restored || move_ec || fs::exists(to / name)) restored = false;
+        }
+        // Delete the stage only when nothing of the player's data is left in it.
+        if (!restored)
+            throw UserError("Aktualizace se nepovedla a hru se nepodařilo úplně vrátit. Nic se nesmazalo: data hry jsou ve složce " + stage.string());
         remove_tree(stage);
         throw;
     }
