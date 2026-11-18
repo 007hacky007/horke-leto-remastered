@@ -63,7 +63,7 @@ struct IntroRuntime::State {
  mutable std::map<std::tuple<std::string,uint32_t,int,int,int,int,int,int,int>,std::string> palette_identities;
  struct Fade {Palette from,target;unsigned step{};Process* waiter{};};
  std::optional<Fade> fade;bool cooperative_fades{},initial_cooperative_fades{};
- Palette palette{},source_palette{},render_palette{};std::function<Result<void>(unsigned)> palette_presenter;std::map<std::string,std::string> strings;std::map<std::string,int32_t> integers{{"version",1}};uint32_t random_state{1};std::vector<nlohmann::json> trace;
+ Palette palette{},source_palette{},render_palette{};std::function<Result<void>(unsigned)> palette_presenter;std::map<std::string,std::string> strings;std::map<std::string,int32_t> integers{{"version",1},{"sound_volume",50},{"music_volume",100}};uint32_t random_state{1};std::vector<nlohmann::json> trace;
  std::optional<Movement> walk;std::optional<Region> walk_region;Process* arrival_waiter{};unsigned char_frame{};int final_direction{-1};
  std::optional<CharacterDefinition> character;std::string character_id;bool character_visible{};int char_x{},char_y{},char_direction{4},near_z{480},far_z{480};
  void close_inventory(){inventory_open=false;for(auto& task:tasks)if(task.process&&task.inventory_context)task.process->state=ProcessState::terminated;
@@ -177,13 +177,13 @@ Result<SaveState> IntroRuntime::save_state()const {
  auto saved=SaveState{s.data_identity,{{"cooperative_fades",s.initial_cooperative_fades},{"tick",s.tick},{"events",s.inputs},{"slot_queries",slot_queries_},{"pointer",{s.pointer_x,s.pointer_y}},{"checkpoint",nlohmann::json::parse(canonical_checkpoint(checkpoint()))}}};if(!s.dos_base.empty())saved.reconstruction["dos_base"]=s.dos_base;return saved;
 }
 Result<void> IntroRuntime::save(const std::filesystem::path& path)const {auto saved=save_state();if(!saved.has_value())return saved.error();return save_game(saved.value(),path);}
-Result<std::unique_ptr<IntroRuntime>> IntroRuntime::restore(const std::filesystem::path& data,const std::filesystem::path& path) {
+Result<std::unique_ptr<IntroRuntime>> IntroRuntime::restore(const std::filesystem::path& data,const std::filesystem::path& path,std::function<Result<void>(const IntroRuntime&)> observe_tick) {
  auto runtime=open(data);if(!runtime.has_value())return runtime.error();auto& g=*runtime.value();std::error_code size_error;auto size=std::filesystem::file_size(path,size_error);if(size_error||size>16*1024*1024+76)return DataError{"","save",0,"missing or invalid save size"};auto bytes=read_file(path);if(!bytes.has_value())return bytes.error();
  if(bytes.value().size()>=4&&bytes.value()[0]==std::byte{0x9a}&&bytes.value()[1]==std::byte{2}&&bytes.value()[2]==std::byte{}&&bytes.value()[3]==std::byte{}){auto restored=g.restore_dos(bytes.value());if(!restored.has_value())return restored.error();return runtime;}
  auto state=load_game(path,g.state_->data_identity);if(!state.has_value())return state.error();
  try {const auto& saved=state.value().reconstruction;auto tick=saved.at("tick").get<uint64_t>();const auto& events=saved.at("events");if(tick>1000000||!events.is_array()||events.size()>100000)return DataError{"","save",0,"invalid reconstruction bounds"};g.slot_queries_=saved.value("slot_queries",std::vector<nlohmann::json>{});if(g.slot_queries_.size()>100000)return DataError{"","save",0,"slot query history exceeds bound"};g.reconstructing_=true;g.set_cooperative_fades(saved.value("cooperative_fades",false));Result<void> r;if(saved.contains("dos_base")){auto base=saved.at("dos_base").get<std::vector<uint8_t>>();r=g.restore_dos(std::as_bytes(std::span(base)));}else r=g.start();if(!r.has_value())return r.error();uint64_t previous=0;
-  for(const auto& e:events){auto at=e.at("tick").get<uint64_t>();if(at<previous||at>tick)return DataError{"","save",0,"invalid reconstruction event order"};previous=at;while(g.state_->tick<at){r=g.update();if(!r.has_value())return r.error();}auto kind=e.at("kind").get<std::string>();auto version=e.value("input_version",1);if(version<1||version>2)return DataError{"","save",0,"invalid input semantics version"};g.legacy_input_=version==1;if(kind=="click")r=g.click(e.at("x").get<int>(),e.at("y").get<int>(),e.at("right").get<bool>());else if(kind=="escape")r=g.escape();else if(kind=="text")r=g.text_input(e.at("text").get<std::string>());else if(kind=="edit_key")r=g.edit_key(e.at("key").get<std::string>());else if(kind=="cooperative_fades"){g.set_cooperative_fades(e.at("enabled").get<bool>());r={};}else if(kind=="pointer")r=g.pointer(e.at("x").get<int>(),e.at("y").get<int>());else return DataError{"","save",0,"unknown reconstruction input"};if(!r.has_value())return r.error();g.legacy_input_=false;}
-  while(g.state_->tick<tick){r=g.update();if(!r.has_value())return r.error();}
+  for(const auto& e:events){auto at=e.at("tick").get<uint64_t>();if(at<previous||at>tick)return DataError{"","save",0,"invalid reconstruction event order"};previous=at;while(g.state_->tick<at){r=g.update();if(!r.has_value())return r.error();if(observe_tick){r=observe_tick(g);if(!r.has_value())return r.error();}}auto kind=e.at("kind").get<std::string>();auto version=e.value("input_version",1);if(version<1||version>3)return DataError{"","save",0,"invalid input semantics version"};g.legacy_input_=version==1;g.narrow_corner_=version==2;if(kind=="click")r=g.click(e.at("x").get<int>(),e.at("y").get<int>(),e.at("right").get<bool>());else if(kind=="escape")r=g.escape();else if(kind=="inventory_key")r=g.toggle_inventory();else if(kind=="text")r=g.text_input(e.at("text").get<std::string>());else if(kind=="edit_key")r=g.edit_key(e.at("key").get<std::string>());else if(kind=="cooperative_fades"){g.set_cooperative_fades(e.at("enabled").get<bool>());r={};}else if(kind=="pointer")r=g.pointer(e.at("x").get<int>(),e.at("y").get<int>());else return DataError{"","save",0,"unknown reconstruction input"};if(!r.has_value())return r.error();g.legacy_input_=g.narrow_corner_=false;}
+  while(g.state_->tick<tick){r=g.update();if(!r.has_value())return r.error();if(observe_tick){r=observe_tick(g);if(!r.has_value())return r.error();}}
   if(saved.contains("pointer")){r=g.pointer(saved.at("pointer").at(0).get<int>(),saved.at("pointer").at(1).get<int>());if(!r.has_value())return r.error();}
   if(g.slot_query_cursor_!=g.slot_queries_.size())return DataError{"","save",0,"unused slot query history"};g.reconstructing_=false;
   if(!g.can_save()||nlohmann::json::parse(canonical_checkpoint(g.checkpoint()))!=saved.at("checkpoint"))return DataError{"","save",0,"reconstructed gameplay state differs from saved state"};
@@ -267,7 +267,7 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
    s.animations.push_back({std::move(d.value()),std::move(*f.value()),&o,blocks?&p:nullptr,p.animation.cycles,period,period-1,variable,p.animation.phase_controlled,false,p.animation.phase_variable==-2||p.animation.loop,p.animation.x,p.animation.y,p.animation.z,op==65});
    if(blocks)p.state=ProcessState::waiting;
   }
-  else if(op==113){auto file=s.alias(n.value());if(!file.has_value())return file.error();auto b=s.archive.read(file.value());if(!b.has_value())return b.error();auto pcm=decode_wav(b.value());if(!pcm.has_value())return pcm.error();auto schedule=SampleSchedule::begin(p.animation.cycles,p.animation.delay,p.animation.periodic,p.animation.random,s.random_state);if(!schedule.has_value())return schedule.error();float gain=std::clamp(p.animation.volume/100.f,0.f,1.f);uint64_t id=0;if(schedule.value().start_now&&!p.animation.phase_controlled){auto voice=s.mixer.play(pcm.value(),gain,0,1,p.animation.sample_priority);if(!voice.has_value())return voice.error();id=voice.value();}bool blocks=p.animation.phase_variable==-1;std::string variable;if(p.animation.phase_variable>=0){auto v=s.resource(p,p.animation.phase_variable);if(!v.has_value())return v.error();variable=v.value();}s.voices.push_back({id,blocks?&p:nullptr,variable,std::move(pcm.value()),gain,schedule.value(),p.animation.phase_controlled,p.animation.sample_priority,s.inventory_open});if(p.animation.phase_controlled&&!variable.empty()){auto r=s.vm.event_global(variable,1);if(!r.has_value())return r.error();}if(blocks)p.state=ProcessState::waiting;}
+  else if(op==113){auto file=s.alias(n.value());if(!file.has_value())return file.error();auto b=s.archive.read(file.value());if(!b.has_value())return b.error();auto pcm=decode_wav(b.value());if(!pcm.has_value())return pcm.error();auto schedule=SampleSchedule::begin(p.animation.cycles,p.animation.delay,p.animation.periodic,p.animation.random,s.random_state);if(!schedule.has_value())return schedule.error();prepare_dos_sample(pcm.value(),int(std::clamp<int64_t>(int64_t(p.animation.volume)*s.integers.at("sound_volume")/100,0,100)));float gain=1;uint64_t id=0;if(schedule.value().start_now&&!p.animation.phase_controlled){auto voice=s.mixer.play(pcm.value(),gain,0,1,p.animation.sample_priority);if(!voice.has_value())return voice.error();id=voice.value();}bool blocks=p.animation.phase_variable==-1;std::string variable;if(p.animation.phase_variable>=0){auto v=s.resource(p,p.animation.phase_variable);if(!v.has_value())return v.error();variable=v.value();}s.voices.push_back({id,blocks?&p:nullptr,variable,std::move(pcm.value()),gain,schedule.value(),p.animation.phase_controlled,p.animation.sample_priority,s.inventory_open});if(p.animation.phase_controlled&&!variable.empty()){auto r=s.vm.event_global(variable,1);if(!r.has_value())return r.error();}if(blocks)p.state=ProcessState::waiting;}
   pop();return p.state==ProcessState::waiting?StepOutcome::yielded:StepOutcome::running;
  }
  if(op==66){o.z=arg(0);pop();}else if(op==67)o.z=480;
@@ -306,7 +306,7 @@ Result<StepOutcome> IntroRuntime::invoke(Process& p,const Instruction& ins) {
   auto b=s.db.read(text.value());if(!b.has_value())return b.error();auto raw=decrypt_game_text(b.value());auto plain=decode_game_text(raw,GameEncoding::kamenicky);if(!plain.has_value())return plain.error();
   std::vector<uint8_t> bytes;for(auto c:raw)bytes.push_back(std::to_integer<uint8_t>(c));auto overlay=make_text_overlay(s.font,bytes,x,y);if(!overlay.has_value())return overlay.error();
   uint64_t voice=0;s.dialogue_ticks=0;
-  if(op==117){auto sound=name(2);if(!sound.has_value())return sound.error();auto file=s.alias(sound.value());if(!file.has_value())return file.error();auto sample=s.archive.read(file.value());if(!sample.has_value())return sample.error();auto pcm=decode_wav(sample.value());if(!pcm.has_value())return pcm.error();auto played=s.mixer.play(pcm.value(),s.integers.at("sound_volume")/100.f,0);if(!played.has_value())return played.error();voice=played.value();}
+  if(op==117){auto sound=name(2);if(!sound.has_value())return sound.error();auto file=s.alias(sound.value());if(!file.has_value())return file.error();auto sample=s.archive.read(file.value());if(!sample.has_value())return sample.error();auto pcm=decode_wav(sample.value());if(!pcm.has_value())return pcm.error();prepare_dos_sample(pcm.value(),s.integers.at("music_volume"));auto played=s.mixer.play(pcm.value(),1,0);if(!played.has_value())return played.error();voice=played.value();}
   else {if(op==116)return fail("filtered timed speech is not yet bound");int speed=s.integers.contains("text_speed")?s.integers.at("text_speed"):70;static constexpr int rates[]={0,631,398,251,158,100,63,40,25,16,10};if(speed<10||speed>100)return fail("invalid text speed");size_t length=std::find(bytes.begin(),bytes.end(),0)-bytes.begin();s.dialogue_ticks=unsigned(std::max(size_t(20),length)*size_t(rates[speed/10])/41+1);}
   auto direction=speech_animation_direction(s.char_direction,s.suppress_speech);if(direction){auto r=s.begin_speech_animation(*direction,true);if(!r.has_value())return r.error();}else if(s.speech_loop)s.speech_direction.reset();
   s.dialogue=std::move(overlay.value());s.dialogue_text=plain.value();s.dialogue_voice=voice;s.dialogue_waiter=&p;p.state=ProcessState::waiting;pop();return StepOutcome::yielded;
@@ -406,13 +406,39 @@ Result<void> IntroRuntime::update() {
  return settle();
 }
 bool IntroRuntime::inventory_open()const{return state_->inventory_open;}
+Result<void> IntroRuntime::open_inventory(){
+ auto& s=*state_;s.inventory_open=true;for(const auto& id:s.inventory.items()){auto r=s.object(id);if(!r.has_value())return r.error();r.value()->inventory_only=true;}
+ bool had=false;for(const auto& o:s.objects)if(o.scene==s.scene_id&&!o.removed&&o.identity=="14iu")had=true;auto helper=s.object("14iu");if(!helper.has_value())return helper.error();if(had){auto r=s.spawn(*helper.value(),0);if(!r.has_value())return r.error();}return {};
+}
+int IntroRuntime::inventory_corner()const{
+ constexpr int largest=20,open_largest=18; // inventory slots start at x 11, y 18; scene regions cut a diagonal near (27,0)-(0,28)
+ const auto& s=*state_;
+ if(s.name_editor||s.fade||s.dialogue_waiter||s.user_locks>0||!s.character||!screens_.empty()||s.quit)return 0;
+ if(s.inventory_open)return open_largest;
+ if(s.inventory_locks>0)return 0;
+ auto menu=s.strings.find("escape_scr");if(menu!=s.strings.end()&&s.scene==menu->second)return 0;
+ auto blocked=[&](int x,int y){for(const auto& o:s.objects)if(o.scene==s.scene_id&&!o.removed&&o.region&&o.identity!=s.scene&&o.region->contains(x-o.x-o.region_x,y-o.y-o.region_y))return true;return false;};
+ // Grow ring by ring; the square [0,k) stays free of every clickable region of the scene.
+ for(int k=0;k<largest;++k)for(int i=0;i<=k;++i)if(blocked(k,i)||blocked(i,k))return k>=4?k:0;
+ return largest;
+}
+Result<void> IntroRuntime::toggle_inventory(){
+ if(!inventory_corner())return {};
+ if(can_save()){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
+ auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","inventory_key"},{"input_version",input_version()}});
+ if(s.inventory_open){s.close_inventory();return {};}
+ return open_inventory();
+}
 const std::string& IntroRuntime::selected_item()const{return state_->selected;}
 Result<void> IntroRuntime::click(int x,int y,bool right){
  if(!legacy_input_&&right&&state_->scene=="14rf")return escape();
  if(can_save()){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
- auto& s=*state_;if(s.name_editor||s.fade)return {};s.inputs.push_back({{"tick",s.tick},{"kind","click"},{"input_version",legacy_input_?1:2},{"x",x},{"y",y},{"right",right}});s.pointer_x=x;s.pointer_y=y;if(x<0||x>=640||y<0||y>=480)return DataError{"",s.scene,0,"click outside logical canvas"};
+ auto& s=*state_;if(s.name_editor||s.fade)return {};s.inputs.push_back({{"tick",s.tick},{"kind","click"},{"input_version",input_version()},{"x",x},{"y",y},{"right",right}});s.pointer_x=x;s.pointer_y=y;if(x<0||x>=640||y<0||y>=480)return DataError{"",s.scene,0,"click outside logical canvas"};
  if(s.dialogue_waiter){if(s.choices){auto id=choice_at(*s.choices,*s.dialogue,x,y);if(!id)return {};if(s.dialogue_waiter->stack.size()>=100)return DataError{"",s.scene,0,"choice result stack overflow"};s.dialogue_waiter->stack.push_back(*id);s.choices.reset();}else s.mixer.stop(s.dialogue_voice);s.dialogue_waiter->state=ProcessState::ready;s.dialogue_waiter=nullptr;s.dialogue.reset();s.dialogue_text.clear();if(s.speech_loop)s.speech_direction.reset();return {};}
  if(s.user_locks>0)return {};
+ // Input version 3 widens the original 3x3 corner to the collision-free square; older inputs keep 3x3.
+ // Objects are hit first, so only free pixels of the 20x20 corner reach the inventory test.
+ int corner=input_version()>=3&&inventory_corner()?(s.inventory_open?18:20):4;bool in_corner=x<corner&&y<corner;
  auto use_selected=[&](State::Object* target)->Result<void>{
   auto selected=s.selected;auto held=s.object(selected);if(!held.has_value())return held.error();State::Object* owner=held.value();std::optional<ScriptHandler> handler;
   if(target){auto h=target->use_handlers.find(selected);auto fallback=target->handlers.find(57);
@@ -422,7 +448,7 @@ Result<void> IntroRuntime::click(int x,int y,bool right){
   }else {auto h=held.value()->handlers.find(56);if(h!=held.value()->handlers.end())handler=h->second;}
   if(handler){auto r=s.spawn(*owner,handler->entry);if(!r.has_value())return r.error();}return settle();
  };
- if(s.inventory_open){auto slot=Inventory::hit(x,y);if(!right||(x<=3&&y<=3)){s.close_inventory();return {};}
+ if(s.inventory_open){auto slot=Inventory::hit(x,y);if(!right||in_corner){s.close_inventory();return {};}
   if(!slot)return {};
   if(*slot==17){auto object=s.object(s.selected.empty()?s.inventory.slots()[17].item:s.selected);if(!object.has_value())return object.error();auto h=object.value()->handlers.find(55);if(h!=object.value()->handlers.end()){auto r=s.spawn(*object.value(),h->second.entry);if(!r.has_value())return r.error();}return {};}
   auto item=s.inventory.slots()[*slot].item;State::Object* target=nullptr;if(!item.empty()){auto object=s.object(item);if(!object.has_value())return object.error();target=object.value();target->inventory_only=true;}
@@ -436,8 +462,7 @@ Result<void> IntroRuntime::click(int x,int y,bool right){
 
  if(target){auto h=target->handlers.find(right?56:s.selected.empty()?55:59);if(h==target->handlers.end()&&!right)h=target->handlers.find(59);
   if(h!=target->handlers.end()){auto result=s.spawn(*target,h->second.entry);if(!result.has_value())return result.error();return settle();}if(right)return {};}
- if(!right&&x<=3&&y<=3&&s.inventory_locks<=0){s.inventory_open=true;for(const auto& id:s.inventory.items()){auto r=s.object(id);if(!r.has_value())return r.error();r.value()->inventory_only=true;}
- bool had=false;for(const auto& o:s.objects)if(o.scene==s.scene_id&&!o.removed&&o.identity=="14iu")had=true;auto helper=s.object("14iu");if(!helper.has_value())return helper.error();if(had){auto r=s.spawn(*helper.value(),0);if(!r.has_value())return r.error();}return {};}
+ if(!right&&in_corner&&s.inventory_locks<=0)return open_inventory();
  if(s.character&&s.character_visible&&s.character_locks<=0&&s.walk_region&&s.walk_region->contains(x,y)){
   s.char_direction=walk_direction(x-s.char_x,y-s.char_y);s.final_direction=-1;auto w=Movement::begin(*s.walk_region,s.char_x,s.char_y,x,y,s.character->directions[s.char_direction].speed,s.near_z,s.far_z);if(!w.has_value())return w.error();if(s.arrival_waiter)s.arrival_waiter->state=ProcessState::terminated;s.walk=std::move(w.value());s.char_x=s.walk->x();s.char_y=s.walk->y();s.arrival_waiter=nullptr;
  }
@@ -457,7 +482,7 @@ Result<void> IntroRuntime::edit_key(std::string_view key){auto& s=*state_;if(!s.
 Result<void> IntroRuntime::escape(){
  if(editing_save_name())return edit_key("escape");
  bool gameplay=can_save();if(gameplay){auto snapshot=save_state();if(!snapshot.has_value())return snapshot.error();menu_save_=std::move(snapshot.value());}
- auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","escape"},{"input_version",legacy_input_?1:2}});auto i=s.strings.find("escape_scr");
+ auto& s=*state_;s.inputs.push_back({{"tick",s.tick},{"kind","escape"},{"input_version",input_version()}});auto i=s.strings.find("escape_scr");
  if(!legacy_input_&&s.inventory_open){s.close_inventory();return {};}
  // Temporary screens return to their caller even before escape_scr is set.
  if((i==s.strings.end()||i->second.empty())&&(legacy_input_||screens_.empty()))return {};

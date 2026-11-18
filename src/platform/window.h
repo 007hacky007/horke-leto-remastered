@@ -78,6 +78,7 @@ inline Result<void> apply_option(SDL_Window* window,GraphicsControl& graphics,co
  }
  case OptionAction::Scaling:graphics.set_scaling(row.scaling);break;
  case OptionAction::Hints:graphics.set_hints_enabled(!graphics.settings().hints_enabled);break;
+ case OptionAction::Inventory:graphics.set_inventory_icon(!graphics.settings().inventory_icon);break;
  default:break;
  }
  return {};

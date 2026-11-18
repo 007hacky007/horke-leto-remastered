@@ -2,6 +2,8 @@
 #include "data/wav.h"
 #include <map>
 namespace hl {
+// Original WAV normalization, volume scaling and four-channel headroom.
+void prepare_dos_sample(PcmAudio& pcm,int volume);
 class Mixer {
  struct Voice {PcmAudio pcm;uint64_t phase{};float gain{},pan{};bool stopped{};uint32_t repeats{1};int32_t priority{100};size_t slot{};};
  size_t capacity_;

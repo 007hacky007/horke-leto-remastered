@@ -15,6 +15,7 @@
 #include "data/grp.h"
 #include <SDL3/SDL.h>
 #include <fstream>
+#include <set>
 #include <iostream>
 #include <chrono>
 #include "stb_image_write.h"
@@ -25,7 +26,7 @@ Result<void> write_json(const std::filesystem::path& file,const nlohmann::json& 
 std::vector<RenderSurface> options_surfaces(const std::vector<OptionRow>& rows,const BitmapFont& font,bool packed){
  std::vector<RenderSurface> out;
  auto rectangle=[&](int x,int y,int z,int width,int height,std::array<uint8_t,4> color){RenderSurface surface{x,y,z,width,height,{}};surface.rgba.resize(size_t(width)*height*4);for(size_t i=0;i<surface.rgba.size();i+=4)std::copy(color.begin(),color.end(),surface.rgba.begin()+i);out.push_back(std::move(surface));};
- rectangle(56,96,-200,528,304,{20,24,32,245});
+ rectangle(56,96,-200,528,336,{20,24,32,245});
  for(const auto& row:rows){
   if(row.selected)rectangle(row.x,row.y,-201,row.width,24,{55,66,80,255});
   // Panel labels are UTF-8 Czech; the game font has its own (Kamenicky) code page.
@@ -65,17 +66,23 @@ int run_native_app(const AppOptions& options) {
   if(setup.has_value()&&!options.remastered_pack.empty()){auto root=std::filesystem::u8path(options.remastered_pack);SourceCatalog approved;for(const auto& [name,source]:catalog.value())if(std::filesystem::exists(root/"flc"/name/"index.json"))approved.emplace(name,source);auto replacements=Pack::open(root,approved);if(!replacements.has_value())setup=replacements.error();else remastered=std::move(replacements.value());}
  }}
  auto font_bytes=read_file(std::filesystem::u8path(options.data_path)/"HL.EXE");auto font=font_bytes.has_value()?load_original_font({font_bytes.value(),252284}):Result<BitmapFont>{font_bytes.error()};if(!font.has_value())setup=font.error();
- nlohmann::json fade_steps=nlohmann::json::array();
+ nlohmann::json fade_steps=nlohmann::json::array();std::set<std::string> missing_variants;
  auto draw_game=[&]()->Result<void>{
   renderer.value()->set_scaling(graphics.settings().scaling);
   renderer.value()->scene(game.scene());
   auto surfaces=game.render_surfaces(bool(original));if(!surfaces.has_value())return surfaces.error();
   auto palette=game.palette_view();auto palette_hash=sha256(std::as_bytes(std::span(palette.source)));
+  // A frame shown under a live palette the pack has no variant for keeps the game's own pixels instead of stopping.
+  if(original){FrameResolver probe(*original,remastered?&*remastered:nullptr);std::vector<size_t> missing;
+   for(size_t i=0;i<surfaces.value().size();++i){const auto& s=surfaces.value()[i];if(!s.source.resource.empty()&&!probe.resolve({s.source.resource,s.source.frame,s.opaque_base?"opaque_base":"overlay",s.source.palette.empty()?palette_hash:s.source.palette},graphics.mode()).has_value())missing.push_back(i);}
+   if(!missing.empty()){auto plain=game.render_surfaces(false);if(!plain.has_value())return plain.error();if(plain.value().size()!=surfaces.value().size())return DataError{"",game.scene(),0,"fallback surface mismatch"};
+    for(auto i:missing){auto& s=surfaces.value()[i];if(missing_variants.insert(s.source.resource+"@"+s.source.palette).second)SDL_Log("No pack variant for %s frame %u, drawing 640x480 pixels",s.source.resource.c_str(),unsigned(s.source.frame));s.rgba=std::move(plain.value()[i].rgba);s.source={};}}}
   bool ready=true;
   if(original&&graphics.mode()!=graphics.requested_mode()){FrameResolver resolver(*original,remastered?&*remastered:nullptr);auto loaded=renderer.value()->ready(surfaces.value(),resolver,graphics.requested_mode(),palette_hash);if(!loaded.has_value())return loaded.error();ready=loaded.value();}
   bool changed=graphics.frame_boundary(ready);if(changed||settings_dirty){auto saved=save_graphics_settings(settings_file,graphics.settings());if(!saved.has_value())return saved;settings_dirty=false;}
   auto markers=graphics.hints_visible()?hint_surfaces(game.active_areas(),true):std::vector<RenderSurface>{};for(auto& marker:markers)surfaces.value().push_back(std::move(marker));if(menu_open){auto usable=usable_window_size(window);if(!usable.has_value())return usable.error();auto panel=options_surfaces(options_rows(graphics.settings(),usable.value()),font.value(),bool(original));for(auto& surface:panel)surfaces.value().push_back(std::move(surface));}
   if(game.scene()=="14rf"&&!menu_open){auto usable=usable_window_size(window);if(!usable.has_value())return usable.error();auto rows=game_settings_rows(graphics.settings(),usable.value(),font.value());for(auto& surface:game_settings_surfaces(rows,font.value()))surfaces.value().push_back(std::move(surface));}
+  if(graphics.settings().inventory_icon&&!menu_open)for(auto& surface:inventory_icon_surfaces(game.inventory_corner()))surfaces.value().push_back(std::move(surface));
   for(auto& surface:help_surfaces(font.value(),help.alpha(SDL_GetTicks()),graphics.settings()))surfaces.value().push_back(std::move(surface));
   if(!original)return renderer.value()->present(std::move(surfaces.value()));
   auto effect=palette_postprocess(palette);if(!effect.has_value())return effect.error();FrameResolver resolver(*original,remastered?&*remastered:nullptr);return renderer.value()->present(std::move(surfaces.value()),resolver,graphics.mode(),palette_hash,effect.value());
@@ -124,6 +131,7 @@ int run_native_app(const AppOptions& options) {
   }
   if(event.type==SDL_EVENT_TEXT_INPUT)return game.text_input(event.text.text);
   if(event.type==SDL_EVENT_KEY_DOWN&&game.editing_save_name()){if(event.key.key==SDLK_RETURN)return game.edit_key("enter");if(event.key.key==SDLK_BACKSPACE)return game.edit_key("backspace");if(event.key.key==SDLK_ESCAPE)return game.edit_key("escape");return {};}
+  if(event.type==SDL_EVENT_KEY_DOWN&&(event.key.key==SDLK_I||event.key.key==SDLK_TAB)&&!(event.key.mod&(SDL_KMOD_GUI|SDL_KMOD_CTRL|SDL_KMOD_ALT))){if(!event.key.repeat)return game.toggle_inventory();return {};}
   if(event.type==SDL_EVENT_KEY_DOWN){if(event.key.key==SDLK_ESCAPE){if(!event.key.repeat)return game.escape();return {};}
    auto file=pref_path/"scene.hls";
    if(event.key.key==SDLK_F2&&game.can_save()){auto r=game.save(file);if(r.has_value())++quick_saves;return r;}
@@ -132,6 +140,7 @@ int run_native_app(const AppOptions& options) {
   if(event.type==SDL_EVENT_MOUSE_MOTION||event.type==SDL_EVENT_MOUSE_BUTTON_DOWN)return dispatch_runtime_mouse(game,window,renderer.value()->sdl(),event,graphics.settings().scaling);
   return {};
  };
+ uint64_t dropped_audio_chunks=0;
  uint64_t start=SDL_GetTicks(),updates=0,last_capture=UINT64_MAX,submitted_frames=0;bool quit=false;
  help.launch(graphics,start);
  std::ofstream audio_file;if(!output.empty())audio_file.open(output/"queued-audio.f32",std::ios::binary);
@@ -163,7 +172,10 @@ int run_native_app(const AppOptions& options) {
     if(!result.has_value())break;
    }
    if(!result.has_value())break;result=game.update();++updates;if(!result.has_value())break;
-   auto audio=game.audio();if(!SDL_PutAudioStreamData(stream,audio.data(),int(audio.size_bytes()))){result=DataError{"","audio",0,SDL_GetError()};break;}
+   // Keep at most ~85 ms queued: after a stall, catch-up audio would otherwise delay every later voice behind its subtitle.
+   auto audio=game.audio();constexpr int max_queued=48000*2*int(sizeof(float))*85/1000;
+   int queued=SDL_GetAudioStreamQueued(stream);if(queued<0){result=DataError{"","audio",0,SDL_GetError()};break;}
+   if(queued<max_queued){if(!SDL_PutAudioStreamData(stream,audio.data(),int(audio.size_bytes()))){result=DataError{"","audio",0,SDL_GetError()};break;}}else ++dropped_audio_chunks;
    if(audio_file)audio_file.write(reinterpret_cast<const char*>(audio.data()),std::streamsize(audio.size_bytes()));submitted_frames+=audio.size()/2;
   }
   auto update_end=std::chrono::steady_clock::now();
@@ -173,7 +185,7 @@ int run_native_app(const AppOptions& options) {
   auto draw_end=std::chrono::steady_clock::now();
   uint64_t bucket=elapsed/1000;
   if(!output.empty()&&last_capture!=bucket) {
-   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(game.checkpoint()));checkpoint["help_visible"]=help.visible(SDL_GetTicks());checkpoint["help_alpha"]=help.alpha(SDL_GetTicks());checkpoint["help_launches"]=graphics.settings().help_launches;checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["display_settings"]={{"fullscreen",graphics.settings().fullscreen},{"window_width",graphics.settings().window_width},{"window_height",graphics.settings().window_height},{"scaling",graphics.settings().scaling==ScalingMode::Fill?"fill":graphics.settings().scaling==ScalingMode::Whole?"whole":"stretch"},{"active_area_hints",graphics.settings().hints_enabled}};checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();
+   auto checkpoint=nlohmann::json::parse(canonical_checkpoint(game.checkpoint()));checkpoint["help_visible"]=help.visible(SDL_GetTicks());checkpoint["help_alpha"]=help.alpha(SDL_GetTicks());checkpoint["help_launches"]=graphics.settings().help_launches;checkpoint["options_open"]=menu_open;checkpoint["cursor_visible"]=SDL_CursorVisible();checkpoint["hints_visible"]=graphics.hints_visible();checkpoint["display_settings"]={{"fullscreen",graphics.settings().fullscreen},{"window_width",graphics.settings().window_width},{"window_height",graphics.settings().window_height},{"scaling",graphics.settings().scaling==ScalingMode::Fill?"fill":graphics.settings().scaling==ScalingMode::Whole?"whole":"stretch"},{"active_area_hints",graphics.settings().hints_enabled}};checkpoint["graphics"]=graphics.mode()==GraphicsMode::Original?"Original":"Remastered";checkpoint["id"]="tick-"+std::to_string(bucket*1000);checkpoint["route_ms"]=elapsed;checkpoint["source_script"]=game.scene();checkpoint["geometry"]=game.geometry();checkpoint["can_save"]=game.can_save();checkpoint["editing_save_name"]=game.editing_save_name();checkpoint["selected_item"]=game.selected_item();checkpoint["inventory_open"]=game.inventory_open();checkpoint["inventory_corner"]=game.inventory_corner();checkpoint["inventory_icon"]=graphics.settings().inventory_icon;
    auto path=output/("tick-"+std::to_string(bucket*1000));auto captured=renderer.value()->readback();
    if(!captured.has_value()){result=captured.error();break;}
    auto model=game.rgba();if(!model.has_value()){result=model.error();break;}
@@ -197,7 +209,7 @@ int run_native_app(const AppOptions& options) {
  if(result.has_value()&&settings_dirty)result=save_graphics_settings(settings_file,graphics.settings());
  if(audio_file){audio_file.close();if(!audio_file)result=DataError{"","audio capture",0,"audio capture write failed"};}
  if(!options.opcode_trace_path.empty()){std::ofstream out(std::filesystem::u8path(options.opcode_trace_path));for(const auto& entry:game.trace())out<<entry.dump()<<'\n';if(!out)result=DataError{"","trace",0,"opcode trace write failed"};}
- nlohmann::json report{{"macos_fullscreen_spaces",SDL_GetHintBoolean(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES,true)},{"runtime_frames",runtime_frames},{"max_update_backlog",max_update_backlog},{"runtime_timing_scope","actual loop including updates, input, audio submission, composition, present and any requested captures; frame intervals also include sleep"},{"options_open",menu_open},{"cursor_visible",SDL_CursorVisible()},{"quick_saves",quick_saves},{"quick_loads",quick_loads},{"schema_version",1},{"platform",SDL_GetPlatform()},{"sdl_version",SDL_GetVersion()},{"backend",renderer.value()->backend()},{"gpu_failure",renderer.value()->gpu_failure()},{"adapter",renderer.value()->adapter()},{"renderer_preference",preference},{"fade_steps",fade_steps},{"updates",updates},{"elapsed_ms",SDL_GetTicks()-start},{"audio_submitted_frames",submitted_frames},{"audio_rate",48000},{"audio_channels",2},{"audio_queued_bytes_at_exit",SDL_GetAudioStreamQueued(stream)},{"scene",game.scene()},{"graphics",graphics.mode()==GraphicsMode::Original?"Original":"Remastered"},{"texture_working_set_bytes",renderer.value()->cache_bytes()},{"exit_code",result.has_value()?0:1},{"capture_method","SDL GPU/renderer readback before present"},{"synchronization",replay?"original startup scripts advanced to stable 126y menu before timed route":"normal startup"}};
+ nlohmann::json report{{"macos_fullscreen_spaces",SDL_GetHintBoolean(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES,true)},{"runtime_frames",runtime_frames},{"max_update_backlog",max_update_backlog},{"runtime_timing_scope","actual loop including updates, input, audio submission, composition, present and any requested captures; frame intervals also include sleep"},{"options_open",menu_open},{"cursor_visible",SDL_CursorVisible()},{"quick_saves",quick_saves},{"quick_loads",quick_loads},{"schema_version",1},{"platform",SDL_GetPlatform()},{"sdl_version",SDL_GetVersion()},{"backend",renderer.value()->backend()},{"gpu_failure",renderer.value()->gpu_failure()},{"adapter",renderer.value()->adapter()},{"renderer_preference",preference},{"fade_steps",fade_steps},{"updates",updates},{"elapsed_ms",SDL_GetTicks()-start},{"audio_submitted_frames",submitted_frames},{"audio_dropped_chunks",dropped_audio_chunks},{"audio_rate",48000},{"audio_channels",2},{"audio_queued_bytes_at_exit",SDL_GetAudioStreamQueued(stream)},{"scene",game.scene()},{"graphics",graphics.mode()==GraphicsMode::Original?"Original":"Remastered"},{"texture_working_set_bytes",renderer.value()->cache_bytes()},{"exit_code",result.has_value()?0:1},{"capture_method","SDL GPU/renderer readback before present"},{"synchronization",replay?"original startup scripts advanced to stable 126y menu before timed route":"normal startup"}};
  if(!result.has_value()){auto e=result.error();report["error"]={{"object",e.resource},{"offset",e.byte_offset},{"reason",e.reason}};std::cerr<<e.resource<<":"<<e.byte_offset<<" "<<e.reason<<'\n';}
  SDL_DestroyAudioStream(stream);renderer.value().reset();SDL_DestroyWindow(window);SDL_Quit();report["resources_released"]=true;
  if(!options.report_path.empty()){auto saved=write_json(std::filesystem::u8path(options.report_path),report);if(!saved.has_value())return 1;}

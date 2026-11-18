@@ -2,6 +2,13 @@
 #include <algorithm>
 #include <cmath>
 namespace hl {
+void prepare_dos_sample(PcmAudio& pcm,int volume) {
+ int peak=0;for(auto sample:pcm.samples)peak=std::max(peak,std::abs(int(sample)));
+ if(!peak)return;volume=std::clamp(volume,0,100);
+ // DOS275f1 normalizes to 0x7ff8; DOS235f5 shifts each voice before summing.
+ for(auto& sample:pcm.samples)sample=int16_t(((int(sample)*32760/peak)*volume/100)>>2);
+}
+
 Result<uint64_t> Mixer::play(const PcmAudio& pcm,float gain,float pan,uint32_t repeats,int32_t priority) {
  if(!repeats||pcm.frames>UINT64_MAX/repeats||!rate_||!pcm.rate||pcm.rate>384000||!pcm.frames||pcm.channels<1||pcm.channels>2||pcm.frames>UINT64_MAX/pcm.channels||pcm.samples.size()!=pcm.frames*pcm.channels||!std::isfinite(gain)||!std::isfinite(pan)||gain<0||gain>1||pan<-1||pan>1)return DataError{"","mixer",0,"invalid PCM/gain/pan"};
  for(auto i=voices_.begin();i!=voices_.end();)if(finished(i->first))i=voices_.erase(i);else ++i;

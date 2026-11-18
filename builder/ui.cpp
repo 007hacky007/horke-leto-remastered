@@ -889,6 +889,12 @@ void game_update_dialog() {
     switch (app.game) {
     case App::GameUpdate::Offer:
         text(bold, tx, cy, "Tvoje hra má starší engine.", INK);
+        if (app.game_info.missing_variants) {
+            text(regular, tx, cy + 22, "Vyměníme engine a doplníme " + std::to_string(app.game_info.missing_variants), NOTE);
+            text(regular, tx, cy + 40, "obrázků pro 4. a 5. kapitolu.", NOTE);
+            text(regular, tx, cy + 58, "Pozice zůstanou, asi 15 minut.", NOTE);
+            break;
+        }
         text(regular, tx, cy + 22, "Vyměníme jen engine. Obrázky, hudba", NOTE);
         text(regular, tx, cy + 40, "i uložené pozice zůstanou původní.", NOTE);
 #ifdef _WIN32
@@ -1677,6 +1683,7 @@ int run_window(int, char**) {
         app.game = state == "running" ? App::GameUpdate::Running : state == "done" ? App::GameUpdate::Done
                  : state == "failed" ? App::GameUpdate::Failed : App::GameUpdate::Offer;
         if (state == "failed") app.game_error = "Podepsání hry selhalo.";
+        if (state == "offer-variants") app.game_info.missing_variants = 159;
         app.game_status = "Ponechávám herní data";
         app.game_at = SDL_GetTicks();
     }

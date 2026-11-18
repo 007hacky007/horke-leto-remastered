@@ -66,4 +66,10 @@ TEST_CASE("window presets exclude every size exceeding usable display bounds") {
  CHECK(window_size_presets(1920,1440)==std::vector<WindowSize>{{640,480},{960,720},{1280,960},{1600,1200},{1920,1440}});
  CHECK(window_size_presets(639,480).empty());CHECK(window_size_presets(640,479).empty());
 }
+TEST_CASE("the inventory icon setting persists and defaults to shown") {
+ auto file=std::filesystem::path("work/m5/settings-inventory-test.json");GraphicsSettings s;s.inventory_icon=false;
+ REQUIRE(save_graphics_settings(file,s).has_value());auto loaded=load_graphics_settings(file);REQUIRE(loaded.has_value());CHECK_FALSE(loaded.value().inventory_icon);
+ {std::ofstream out(file);out<<R"({"schema_version":1,"graphics":"Original"})";}
+ loaded=load_graphics_settings(file);REQUIRE(loaded.has_value());CHECK(loaded.value().inventory_icon);std::filesystem::remove(file);
+}
 }

@@ -6,6 +6,8 @@ namespace hl {
 std::string ui_text(const BitmapFont&,std::u32string_view);
 std::vector<OptionRow> game_settings_rows(const GraphicsSettings&,WindowSize,const BitmapFont&);
 std::vector<RenderSurface> game_settings_surfaces(const std::vector<OptionRow>&,const BitmapFont&);
+// Our own pixel-art bag for the top-left inventory hotspot (empty when the corner is too small).
+std::vector<RenderSurface> inventory_icon_surfaces(int corner);
 std::vector<RenderSurface> help_surfaces(const BitmapFont&,uint8_t alpha,const GraphicsSettings& = {});
 class HelpCard {
  uint64_t start_{},duration_{};bool visible_{};

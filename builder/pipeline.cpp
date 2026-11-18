@@ -233,6 +233,15 @@ static void sign_game(const fs::path& app, bool verify = true) {
         throw UserError("Podepsání hry selhalo.");
 }
 
+static json missing_variant_specs(const fs::path& resources) {
+    json missing = json::array();
+    for (auto& spec : builder_pins().at("palette_variants"))
+        if (!fs::exists(resources / "packs" / "original" / "variants" / spec.at("palette_sha256").get<std::string>() / "flc" /
+                        spec.at("resource").get<std::string>() / "index.json"))
+            missing.push_back(spec);
+    return missing;
+}
+
 std::optional<GameInfo> inspect_game(const fs::path& app) {
     std::error_code ec;
     auto res = game_resources(app);
@@ -245,7 +254,47 @@ std::optional<GameInfo> inspect_game(const fs::path& app) {
     } catch (...) {
         info.outdated = true;  // built by 1.0.0, before build info existed
     }
+    try { info.missing_variants = int(missing_variant_specs(res).size()); } catch (...) {}
+    if (info.missing_variants) info.outdated = true;
     return info;
+}
+
+static Upscaler prepare_upscaler(const fs::path& tools, const fs::path& work, const json& pins) {
+    auto platform = WINDOWS ? "windows" : "macos";
+    auto inference = work / "upscaler";
+    remove_tree(inference);
+    zip_extract_file(tools / "upscaler.zip", inference);
+    Upscaler upscaler;
+    upscaler.runner = inference / (WINDOWS ? "realesrgan-ncnn-vulkan.exe" : "realesrgan-ncnn-vulkan");
+    upscaler.models = inference / "models";
+    upscaler.runner_sha256 = pins.at("upscalers").at(platform).at("runner_sha256");
+    upscaler.model = pins.at("model");
+    if (sha_file(upscaler.runner) != upscaler.runner_sha256) throw UserError("Zvětšovač v průvodci nesedí s kontrolním součtem.");
+    for (auto& m : pins.at("model").at("files"))
+        if (sha_file(upscaler.models / fs::path(m.at("path").get<std::string>()).filename()) != m.at("sha256").get<std::string>())
+            throw UserError("Model AnimeVideo v průvodci nesedí s kontrolním součtem.");
+    if (!WINDOWS) fs::permissions(upscaler.runner, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec);
+    return upscaler;
+}
+
+// Older builds lack palette variants added to pins later; build them from the game's own data.
+static void fill_palette_variants(const fs::path& tools, const fs::path& resources, const fs::path& work, const Emit& emit) {
+    auto pins = builder_pins();
+    auto missing = missing_variant_specs(resources);
+    if (missing.empty()) return;
+    emit("[detail] Doplňuji " + std::to_string(missing.size()) + " barevných variant, které starší verze nevytvořila");
+    // Best effort: without them the game draws those pictures unscaled, so a failure here must not block the engine update.
+    try {
+    run_tool(tools, {"assets", "export-frames", "--data", (resources / "data").string(), "--out", (work / "frames").string(),
+                     "--report", (work / "frames-report.json").string()}, work / "export-frames.log");
+    auto upscaler = prepare_upscaler(tools, work, pins);
+    auto frames = read_json(work / "frames" / "index.json").at("resources");
+    build_palette_variants({work / "frames", work / "cache", resources / "packs" / "original", work / "evidence", emit}, upscaler, frames, missing,
+        [&](int done, int total, const std::string& name) { emit("[detail] Varianta " + std::to_string(done) + "/" + std::to_string(total) + ": " + name); });
+    } catch (const std::exception& error) {
+        emit(std::string("[detail] Barevné varianty se nepodařilo doplnit, hra ty obrázky ukáže nezvětšené: ") + error.what());
+    }
+    for (auto part : {"frames", "cache", "evidence", "upscaler"}) remove_tree(work / part);
 }
 
 fs::path update_game(const fs::path& app, const Emit& emit) {
@@ -275,6 +324,7 @@ fs::path update_game(const fs::path& app, const Emit& emit) {
             emit("[detail] Ponechávám " + name);
         }
         try { carry_game_icon(app, stage); } catch (const std::exception& e) { emit(std::string("[detail] Ikonu se nepodařilo přenést: ") + e.what()); }
+        fill_palette_variants(tools, to, work, emit);
         write_build_info(stage, tools);
         emit("[detail] Podepisuji aktualizovanou hru");
         sign_game(stage, false);  // verifying would read all 9 GB again; the build path verifies
@@ -436,20 +486,7 @@ fs::path build_game(const BuildRequest& req, const Emit& emit) {
 
     emit("[stage] upscale");
     emit("Zvětšujeme obrázky (AnimeVideo v3); odhad času se upřesní po prvních snímcích");
-    auto platform = WINDOWS ? "windows" : "macos";
-    auto inference = work / "upscaler";
-    remove_tree(inference);
-    zip_extract_file(tools / "upscaler.zip", inference);
-    Upscaler upscaler;
-    upscaler.runner = inference / (WINDOWS ? "realesrgan-ncnn-vulkan.exe" : "realesrgan-ncnn-vulkan");
-    upscaler.models = inference / "models";
-    upscaler.runner_sha256 = pins.at("upscalers").at(platform).at("runner_sha256");
-    upscaler.model = pins.at("model");
-    if (sha_file(upscaler.runner) != upscaler.runner_sha256) throw UserError("Zvětšovač v průvodci nesedí s kontrolním součtem.");
-    for (auto& m : pins.at("model").at("files"))
-        if (sha_file(upscaler.models / fs::path(m.at("path").get<std::string>()).filename()) != m.at("sha256").get<std::string>())
-            throw UserError("Model AnimeVideo v průvodci nesedí s kontrolním součtem.");
-    if (!WINDOWS) fs::permissions(upscaler.runner, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec);
+    auto upscaler = prepare_upscaler(tools, work, pins);
     auto resources = read_json(work / "frames" / "index.json").at("resources");
     std::sort(resources.begin(), resources.end(), [](const json& a, const json& b) { return a.at("name") < b.at("name"); });
     build_original({work / "frames", work / "cache", work / "packs" / "original", work / "evidence", emit}, upscaler, resources,

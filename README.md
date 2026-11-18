@@ -50,6 +50,8 @@ silicon and on Windows 10 and 11, plus a builder that prepares the pictures:
   opens as large as fits your screen and remembers its size.
 - **Esc** opens the game's own menu (save, load, volume); Esc again returns to
   the game. **F10** opens the graphics options.
+- **I** or **Tab** opens the inventory (so does a click on the small bag in the
+  top-left corner). The bag can be hidden in the options.
 - The music from the CD and all the Czech voices are kept.
 
 | At the tent | On the beach |
@@ -183,7 +185,8 @@ Hra sama v balíčku není. Stáhni si průvodce pro svůj počítač z
 [poslední verze](https://github.com/007hacky007/horke-leto-remastered/releases/latest),
 vyber obraz svého CD (BIN/CUE, IMG/CCD, MDF/MDS nebo NRG), na Windows klidně rovnou
 mechaniku, a průvodce hru sestaví. Klávesa **F8** přepíná původní a překreslenou
-grafiku, podržený **mezerník** ukáže všechna aktivní místa. Na Macu se průvodce
+grafiku, podržený **mezerník** ukáže všechna aktivní místa, **I** nebo **Tab** otevře
+inventář. Na Macu se průvodce
 poprvé otevře přes *Nastavení systému > Soukromí a zabezpečení > Přesto otevřít*
 (návod je přímo v okně disku), na Windows přes *Další informace > Přesto spustit*.
 Celou obrazovku přepneš klávesou **F11**.
