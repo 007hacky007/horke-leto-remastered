@@ -233,6 +233,13 @@ static void sign_game(const fs::path& app, bool verify = true) {
         throw UserError("Podepsání hry selhalo.");
 }
 
+// Which variant list (and variant rules) last filled this game; a newer builder fills again.
+static const char* VARIANT_RULES = "remastered-copies-2";
+static std::string variant_stamp() { return sha_text(std::string(EMBEDDED_PINS) + VARIANT_RULES); }
+static bool variants_current(const fs::path& resources) {
+    try { return read_json(resources / "packs" / "variants-filled.json").at("stamp") == variant_stamp(); } catch (...) { return false; }
+}
+
 static json missing_variant_specs(const fs::path& resources) {
     json missing = json::array();
     auto pins = builder_pins();  // keep alive: the loop borrows from it
@@ -251,12 +258,13 @@ std::optional<GameInfo> inspect_game(const fs::path& app) {
     try {
         auto build = read_json(res / "build-info.json");
         info.builder_version = build.value("builder_version", "");
-        info.outdated = build.value("engine_id", "") != payload_engine_id();
+        info.outdated = info.outdated_engine = build.value("engine_id", "") != payload_engine_id();
     } catch (...) {
-        info.outdated = true;  // built by 1.0.0, before build info existed
+        info.outdated = info.outdated_engine = true;  // built by 1.0.0, before build info existed
     }
     try { info.missing_variants = int(missing_variant_specs(res).size()); } catch (...) {}
-    if (info.missing_variants) info.outdated = true;
+    info.variants_stale = !variants_current(res);
+    if (info.missing_variants || info.variants_stale) info.outdated = true;
     return info;
 }
 
@@ -305,6 +313,7 @@ static void fill_palette_variants(const fs::path& tools, const fs::path& resourc
     } catch (const std::exception& error) {
         emit(std::string("[detail] Varianty remasteru se nepodařilo doplnit: ") + error.what());
     }
+    if (missing_variant_specs(resources).empty()) write_json(resources / "packs" / "variants-filled.json", {{"schema_version", 1}, {"stamp", variant_stamp()}});
 }
 
 fs::path update_game(const fs::path& app, const Emit& emit) {
@@ -373,6 +382,7 @@ static fs::path assemble(const fs::path& tools, const fs::path& work, const fs::
     move_or_copy(work / "data", resources / "data", move);
     move_or_copy(work / "packs", resources / "packs", move);
     normalize_runtime(resources / "packs" / "remastered");
+    if (missing_variant_specs(resources).empty()) write_json(resources / "packs" / "variants-filled.json", {{"schema_version", 1}, {"stamp", variant_stamp()}});
     for (auto part : {"data", "packs/original", "packs/remastered"}) {
         uint64_t bytes = 0; size_t count = 0;
         for (auto& f : files_under(resources / part)) { bytes += fs::file_size(f); ++count; }

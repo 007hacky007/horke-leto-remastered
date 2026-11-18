@@ -43,6 +43,8 @@ struct GameInfo {
     std::string builder_version;  // empty for games from builder 1.0.0
     bool outdated = false;        // its engine differs from the one this builder carries, or variants are missing
     int missing_variants = 0;     // palette variants added to pins after the game was built
+    bool outdated_engine = false; // the engine itself differs
+    bool variants_stale = false;  // filled by an older variant list or older rules
 };
 std::string payload_engine_id();                    // identifies the engine and launcher in the embedded payload
 std::optional<GameInfo> inspect_game(const fs::path& app);

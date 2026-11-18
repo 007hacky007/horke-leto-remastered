@@ -888,11 +888,17 @@ void game_update_dialog() {
     std::string built = app.game_info.builder_version.empty() ? "1.0.0" : app.game_info.builder_version;
     switch (app.game) {
     case App::GameUpdate::Offer:
-        text(bold, tx, cy, "Tvoje hra má starší engine.", INK);
+        text(bold, tx, cy, app.game_info.outdated_engine || app.game_info.missing_variants ? "Tvoje hra má starší engine." : "Tvoje hra má starší obrázky.", INK);
         if (app.game_info.missing_variants) {
             text(regular, tx, cy + 22, "Vyměníme engine a doplníme " + std::to_string(app.game_info.missing_variants), NOTE);
             text(regular, tx, cy + 40, "obrázků pro 4. a 5. kapitolu.", NOTE);
             text(regular, tx, cy + 58, "Pozice zůstanou, asi 15 minut.", NOTE);
+            break;
+        }
+        if (!app.game_info.outdated_engine) {
+            text(regular, tx, cy + 22, "Doplníme překreslené obrázky pro místnosti", NOTE);
+            text(regular, tx, cy + 40, "s jinou paletou. Pozice zůstanou.", NOTE);
+            text(regular, tx, cy + 58, "Zabere to pár minut.", NOTE);
             break;
         }
         text(regular, tx, cy + 22, "Vyměníme jen engine. Obrázky, hudba", NOTE);
@@ -904,7 +910,7 @@ void game_update_dialog() {
 #endif
         break;
     case App::GameUpdate::Running:
-        text(bold, tx, cy, "Měníme engine...", INK);
+        text(bold, tx, cy, app.game_info.outdated_engine || app.game_info.missing_variants ? "Měníme engine..." : "Doplňujeme obrázky...", INK);
         text(regular, tx, cy + 22, elide(regular, app.game_status, tw), NOTE);
         segments(tx, cy + 46, tw, 18, 0, int(t * 12));
         break;
@@ -1679,6 +1685,7 @@ int run_window(int, char**) {
     }
     if (const char* test = SDL_getenv("HB_TEST_GAME_DIALOG")) {  // dev hook: "offer" or "running" over a fake game
         app.game_info = GameInfo{fs::u8path("/Users/hrac/Hry/Horke Leto/Horke Leto.app"), "", true};
+        app.game_info.outdated_engine = std::string(test) != "offer-images";app.game_info.variants_stale = !app.game_info.outdated_engine;
         std::string state = test;
         app.game = state == "running" ? App::GameUpdate::Running : state == "done" ? App::GameUpdate::Done
                  : state == "failed" ? App::GameUpdate::Failed : App::GameUpdate::Offer;
