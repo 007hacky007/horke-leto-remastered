@@ -3,6 +3,9 @@
 #include "disc.h"
 #include "remastered.h"
 #include "zip.h"
+#include <ctime>
+#include <SDL3/SDL.h>
+#include "update.h"
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -194,6 +197,100 @@ static void move_or_copy(const fs::path& from, const fs::path& to, bool move) {
     fs::copy(from, to, fs::copy_options::recursive);
 }
 
+static std::string engine_id(const json& manifest) {
+    std::string ids;
+    for (auto& f : manifest.at("files")) {
+        std::string path = f.at("path");
+        if (path.rfind("game/", 0) == 0) ids += path + ":" + f.at("sha256").get<std::string>() + "\n";
+    }
+    return sha_text(ids);
+}
+
+std::string payload_engine_id() {
+    auto payload = embedded_payload();
+    for (auto& e : zip_entries(payload))
+        if (e.name == "payload-manifest.json") return engine_id(json::parse(zip_read(payload, e)));
+    throw UserError("Payload is incomplete");
+}
+
+static fs::path game_resources(const fs::path& app) { return WINDOWS ? app / "Resources" : app / "Contents" / "Resources"; }
+
+static void write_build_info(const fs::path& app, const fs::path& tools) {
+    write_json(game_resources(app) / "build-info.json", {{"schema_version", 1}, {"builder_version", builder_version()},
+        {"engine_id", engine_id(read_json(tools / "payload-manifest.json"))}, {"built", int64_t(std::time(nullptr))}});
+}
+
+static void sign_game(const fs::path& app, bool verify = true) {
+    if (WINDOWS) return;
+    // Nested code first, then the bundle (ad hoc signature, as macOS requires on Apple Silicon).
+    for (auto& p : files_under(app)) {
+        auto perms = fs::status(p).permissions();
+        if (p.extension() == ".dylib" || (perms & fs::perms::owner_exec) != fs::perms::none)
+            run_process({"/usr/bin/codesign", "--force", "--sign", "-", p.string()});
+    }
+    if (run_process({"/usr/bin/codesign", "--force", "--sign", "-", app.string()}) != 0 ||
+        (verify && run_process({"/usr/bin/codesign", "--verify", "--deep", "--strict", app.string()}) != 0))
+        throw UserError("Podepsání hry selhalo.");
+}
+
+std::optional<GameInfo> inspect_game(const fs::path& app) {
+    std::error_code ec;
+    auto res = game_resources(app);
+    if (!fs::is_regular_file(res / "launch.json", ec) || !fs::is_directory(res / "packs", ec)) return std::nullopt;
+    GameInfo info{app};
+    try {
+        auto build = read_json(res / "build-info.json");
+        info.builder_version = build.value("builder_version", "");
+        info.outdated = build.value("engine_id", "") != payload_engine_id();
+    } catch (...) {
+        info.outdated = true;  // built by 1.0.0, before build info existed
+    }
+    return info;
+}
+
+fs::path update_game(const fs::path& app, const Emit& emit) {
+    if (!inspect_game(app)) throw UserError("Tady žádná sestavená hra není: " + app.string());
+    char* pref = SDL_GetPrefPath("hl-port", "HorkeLetoBuilder");
+    fs::path work = (pref ? fs::u8path(pref) : fs::temp_directory_path()) / "update";
+    SDL_free(pref);
+    fs::create_directories(work);
+    emit("[detail] Rozbaluji nový engine");
+    auto tools = extract_payload(work, emit);
+    auto stage = app; stage += ".update";
+    auto old = app; old += ".old";
+    remove_tree(stage);
+    remove_tree(old);
+    fs::copy(tools / "game", stage, fs::copy_options::recursive);
+    auto from = game_resources(app), to = game_resources(stage);
+    fs::create_directories(to);
+    // Large parts move (same disk, instant); on any failure they move back.
+    std::vector<std::string> kept;
+    for (auto name : {"data", "packs", "launch.json", "game-icon.png", "AppIcon.icns"}) if (fs::exists(from / name)) kept.push_back(name);
+    std::vector<std::string> moved;
+    try {
+        for (auto& name : kept) {
+            if (fs::exists(to / name)) remove_tree(to / name);
+            fs::rename(from / name, to / name);
+            moved.push_back(name);
+            emit("[detail] Ponechávám " + name);
+        }
+        try { carry_game_icon(app, stage); } catch (const std::exception& e) { emit(std::string("[detail] Ikonu se nepodařilo přenést: ") + e.what()); }
+        write_build_info(stage, tools);
+        emit("[detail] Podepisuji aktualizovanou hru");
+        sign_game(stage, false);  // verifying would read all 9 GB again; the build path verifies
+        fs::rename(app, old);
+        fs::rename(stage, app);
+    } catch (...) {
+        for (auto& name : moved) { std::error_code ec; fs::rename(to / name, from / name, ec); }
+        if (!fs::exists(app) && fs::exists(old)) { std::error_code ec; fs::rename(old, app, ec); }
+        remove_tree(stage);
+        throw;
+    }
+    remove_tree(old);
+    emit("Hra aktualizovaná: " + app.string());
+    return app;
+}
+
 static fs::path assemble(const fs::path& tools, const fs::path& work, const fs::path& destination, bool move, const Emit& emit) {
     auto target = destination / app_name();
     auto stage = target; stage += ".stage";
@@ -214,23 +311,14 @@ static fs::path assemble(const fs::path& tools, const fs::path& work, const fs::
         emit(line);
     }
     write_json(resources / "launch.json", {{"schema_version", 1}, {"data", "data"}, {"packs", "packs"}});
+    write_build_info(stage, tools);
     try {
         make_game_icon(work, stage);
         emit("[detail] Ikona hry vytvořena z tvých herních dat");
     } catch (const std::exception& error) {
         emit(std::string("[detail] Ikonu hry se nepodařilo vytvořit: ") + error.what());
     }
-    if (!WINDOWS) {
-        // Nested code first, then the bundle (ad hoc signature, as macOS requires on Apple Silicon).
-        for (auto& p : files_under(stage)) {
-            auto perms = fs::status(p).permissions();
-            if (p.extension() == ".dylib" || (perms & fs::perms::owner_exec) != fs::perms::none)
-                run_process({"/usr/bin/codesign", "--force", "--sign", "-", p.string()});
-        }
-        if (run_process({"/usr/bin/codesign", "--force", "--sign", "-", stage.string()}) != 0 ||
-            run_process({"/usr/bin/codesign", "--verify", "--deep", "--strict", stage.string()}) != 0)
-            throw UserError("Podepsání hry selhalo.");
-    }
+    sign_game(stage);
     fs::rename(stage, target);
     emit("Hotovo: " + target.string());
     return target;

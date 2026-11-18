@@ -8,6 +8,11 @@
 #endif
 
 namespace hb {
+#ifdef _WIN32
+constexpr bool WINDOWS_GAME = true;
+#else
+constexpr bool WINDOWS_GAME = false;
+#endif
 static Image downscale(const Image& in, int size) {  // box filter
     Image out(size, size, 4);
     double s = double(in.w) / size;
@@ -110,14 +115,64 @@ static Bytes ico(const std::vector<Bytes>& images) {
     return out;
 }
 
+#ifndef _WIN32
+static void plist_icon(const fs::path& app) {
+    // Info.plist is XML from our own template: add CFBundleIconFile once.
+    auto plist_path = app / "Contents" / "Info.plist";
+    auto bytes = read_file(plist_path);
+    std::string plist(bytes.begin(), bytes.end());
+    if (plist.find("CFBundleIconFile") == std::string::npos) {
+        auto at = plist.rfind("</dict>");
+        if (at == std::string::npos) throw std::runtime_error("Info.plist");
+        plist.insert(at, "\t<key>CFBundleIconFile</key>\n\t<string>AppIcon</string>\n");
+        write_file(plist_path, plist.data(), plist.size());
+    }
+}
+#endif
+
+static fs::path resources_of(const fs::path& app) { return WINDOWS_GAME ? app / "Resources" : app / "Contents" / "Resources"; }
+
+static void apply_game_icon(const Image& image, const fs::path& app);
+
 fs::path make_game_icon(const fs::path& work, const fs::path& app) {
     auto image = icon_image(work);
     auto preview = work / "game-icon.png";
     save_png(image, preview);
+    save_png(image, resources_of(app) / "game-icon.png");  // kept so an engine update can re-apply it
+    apply_game_icon(image, app);
+    return preview;
+}
+
+void carry_game_icon(const fs::path& old_app, const fs::path& new_app) {
+    auto png = resources_of(new_app) / "game-icon.png";
+    if (fs::exists(png)) { apply_game_icon(load_png(png, 4), new_app); return; }
+#ifdef _WIN32
+    // Games from builder 1.0.0 keep their icon only inside the exe: copy those resources across.
+    HMODULE from = LoadLibraryExW((old_app / "HorkeLeto.exe").wstring().c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!from) return;
+    HANDLE update = BeginUpdateResourceW((new_app / "HorkeLeto.exe").wstring().c_str(), FALSE);
+    if (!update) { FreeLibrary(from); return; }
+    for (WORD id = 1; id <= 16; ++id) {
+        HRSRC r = FindResourceW(from, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(3));
+        if (!r) continue;
+        HGLOBAL data = LoadResource(from, r);
+        UpdateResourceW(update, MAKEINTRESOURCEW(3), MAKEINTRESOURCEW(id), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), LockResource(data), SizeofResource(from, r));
+    }
+    if (HRSRC g = FindResourceW(from, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(14))) {
+        HGLOBAL data = LoadResource(from, g);
+        UpdateResourceW(update, MAKEINTRESOURCEW(14), MAKEINTRESOURCEW(1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), LockResource(data), SizeofResource(from, g));
+    }
+    FreeLibrary(from);
+    EndUpdateResourceW(update, FALSE);
+#else
+    (void)old_app;
+    if (fs::exists(resources_of(new_app) / "AppIcon.icns")) plist_icon(new_app);
+#endif
+}
+
+static void apply_game_icon(const Image& image, const fs::path& app) {
 #ifdef _WIN32
     auto images = ico_images(image);
-    auto file = ico(images);
-    write_file(work / "game-icon.ico", file.data(), file.size());
     HANDLE update = BeginUpdateResourceW((app / "HorkeLeto.exe").wstring().c_str(), FALSE);
     if (!update) throw std::runtime_error("BeginUpdateResource");
     Bytes group;
@@ -133,17 +188,7 @@ fs::path make_game_icon(const fs::path& work, const fs::path& app) {
 #else
     auto file = icns(image);
     write_file(app / "Contents" / "Resources" / "AppIcon.icns", file.data(), file.size());
-    // Info.plist is XML from our own template: add CFBundleIconFile once.
-    auto plist_path = app / "Contents" / "Info.plist";
-    auto bytes = read_file(plist_path);
-    std::string plist(bytes.begin(), bytes.end());
-    if (plist.find("CFBundleIconFile") == std::string::npos) {
-        auto at = plist.rfind("</dict>");
-        if (at == std::string::npos) throw std::runtime_error("Info.plist");
-        plist.insert(at, "\t<key>CFBundleIconFile</key>\n\t<string>AppIcon</string>\n");
-        write_file(plist_path, plist.data(), plist.size());
-    }
+    plist_icon(app);
 #endif
-    return preview;
 }
 }

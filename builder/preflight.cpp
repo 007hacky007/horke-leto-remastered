@@ -62,7 +62,11 @@ static Check check_space(const fs::path& output) {
 static Check check_write(const fs::path& output, const fs::path& image) {
     Check c{"write", "Cílová složka", Check::Ok, output.string()};
     auto fail = [&](const char* text, const char* hint) { c.state = Check::Fail; c.text = text; c.hint = hint; c.fix = "output"; return c; };
-    if (fs::exists(output / app_name())) return fail("V cílové složce už hotová hra je.", "Vyber jinou, prázdnou složku.");
+    if (fs::exists(output / app_name())) {
+        fail("V cílové složce už je sestavená hra. Stačí jí vyměnit engine.", "Aktualizuj ji, nebo vyber jinou složku.");
+        c.fix = "update";
+        return c;
+    }
     if (!image.empty()) {
         auto source = fs::absolute(image).parent_path(), target = fs::absolute(output);
         if (target == source || std::mismatch(source.begin(), source.end(), target.begin(), target.end()).first == source.end())

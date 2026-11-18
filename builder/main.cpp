@@ -28,6 +28,13 @@ int main(int argc, char** argv) {
             try { std::printf("OK %s\n", hb::self_check().c_str()); return 0; }
             catch (const std::exception& error) { std::fprintf(stderr, "FAILED: %s\n", error.what()); return 1; }
         }
+        if (a == "--update-game" && i + 1 < argc) {
+            try {
+                auto path = hb::update_game(hb::fs::u8path(argv[i + 1]), [](const std::string& line) { std::printf("%s\n", line.c_str()); std::fflush(stdout); });
+                std::printf("OK %s\n", path.string().c_str());
+                return 0;
+            } catch (const std::exception& error) { std::fprintf(stderr, "CHYBA: %s\n", error.what()); return 1; }
+        }
         if (a == "--cli") cli = true;
         else if (a == "--image") request.image = hb::fs::u8path(next());
         else if (a == "--drive") request.drive = next();

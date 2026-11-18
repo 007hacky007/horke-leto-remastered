@@ -41,6 +41,49 @@ void save_session(const Session& s) {
     } catch (...) {}
 }
 
+static fs::path games_file() { auto s = session_file(); return s.empty() ? s : s.parent_path() / "games.json"; }
+
+void remember_game(const fs::path& app) {
+    auto path = games_file();
+    if (path.empty()) return;
+    try {
+        json list = fs::exists(path) ? read_json(path) : json{{"schema_version", 1}, {"games", json::array()}};
+        auto text = app.string();
+        for (auto& g : list.at("games")) if (g == text) return;
+        list["games"].push_back(text);
+        fs::create_directories(path.parent_path());
+        write_json(path, list);
+    } catch (...) {}
+}
+
+std::vector<fs::path> known_games() {
+    std::vector<fs::path> out;
+    auto add = [&](const fs::path& p) {
+        std::error_code ec;
+        if (p.empty() || !fs::exists(p, ec)) return;
+        for (auto& q : out) if (fs::equivalent(q, p, ec)) return;
+        out.push_back(p);
+    };
+    try {
+        auto path = games_file();
+        if (!path.empty() && fs::exists(path))
+            for (auto& g : read_json(path).at("games")) add(fs::u8path(g.get<std::string>()));
+    } catch (...) {}
+#ifdef _WIN32
+    const char* name = "HorkeLeto";
+#else
+    const char* name = "Horke Leto.app";
+#endif
+    if (const char* home = SDL_GetUserFolder(SDL_FOLDER_HOME)) add(fs::u8path(home) / "Games" / "Horke Leto" / name);
+    for (auto folder : {SDL_FOLDER_DOWNLOADS, SDL_FOLDER_DESKTOP})
+        if (const char* d = SDL_GetUserFolder(folder)) { add(fs::u8path(d) / name); add(fs::u8path(d) / "Horke Leto" / name); }
+#ifndef _WIN32
+    add("/Applications/Horke Leto.app");
+    if (const char* home = SDL_GetUserFolder(SDL_FOLDER_HOME)) add(fs::u8path(home) / "Applications" / name);
+#endif
+    return out;
+}
+
 void clear_session() {
     auto path = session_file();
     std::error_code ec;

@@ -1,6 +1,7 @@
 // The whole build: verified source -> data -> frames -> art -> Original -> Remastered -> playable copy.
 #pragma once
 #include "util.h"
+#include <optional>
 
 namespace hb {
 struct BuildRequest {
@@ -34,4 +35,16 @@ std::string self_check();
 
 // Game icon from the player's data: writes icon files and returns the RGBA 1024 image path.
 fs::path make_game_icon(const fs::path& work, const fs::path& app);
+void carry_game_icon(const fs::path& old_app, const fs::path& new_app);
+
+// A game this builder (or an older one) assembled.
+struct GameInfo {
+    fs::path app;
+    std::string builder_version;  // empty for games from builder 1.0.0
+    bool outdated = false;        // its engine differs from the one this builder carries
+};
+std::string payload_engine_id();                    // identifies the engine and launcher in the embedded payload
+std::optional<GameInfo> inspect_game(const fs::path& app);
+// Replaces the engine and launcher of an existing game; data, packs and the icon stay. Seconds, not hours.
+fs::path update_game(const fs::path& app, const Emit& emit);
 }

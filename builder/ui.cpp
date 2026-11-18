@@ -347,6 +347,13 @@ struct App {
     fs::path update_file;
     bool update_dismissed = false, quit = false;
     std::thread update_worker;
+    // Engine update of an already built game.
+    enum class GameUpdate { None, Offer, Running, Done, Failed } game = GameUpdate::None;
+    std::deque<GameInfo> outdated;  // found at start; the first one is offered
+    GameInfo game_info;
+    std::string game_status, game_error;
+    Uint64 game_at = 0;
+    std::thread game_worker;
 } app;
 
 
@@ -801,6 +808,111 @@ void resume_dialog() {
 
 void start_update_download();
 
+void offer_game_update(const fs::path& app_path) {
+    auto info = inspect_game(app_path);
+    if (!info) return;
+    app.game_info = *info;
+    app.game = App::GameUpdate::Offer;
+    app.game_at = SDL_GetTicks();
+}
+
+void find_outdated_games() {
+    if (SDL_getenv("HB_DEMO")) return;
+    std::thread([] {
+        for (auto& path : known_games()) {
+            auto info = inspect_game(path);
+            if (!info || !info->outdated) continue;
+            std::lock_guard g(app.lock);
+            app.messages.push_back("[game-outdated] " + path.string());
+        }
+    }).detach();
+}
+
+void start_game_update() {
+    app.game = App::GameUpdate::Running;
+    app.game_at = SDL_GetTicks();
+    app.game_error.clear();
+    app.game_status = "Připravuji nový engine...";
+    if (app.game_worker.joinable()) app.game_worker.join();
+    app.game_worker = std::thread([target = app.game_info.app] {
+        auto emit = [](const std::string& line) {
+            std::lock_guard g(app.lock);
+            app.messages.push_back("[game] " + (line.rfind("[detail] ", 0) == 0 ? line.substr(9) : line));
+        };
+        try {
+            update_game(target, emit);
+            std::lock_guard g(app.lock);
+            app.messages.push_back("[game-done]");
+        } catch (const std::exception& e) {
+            std::lock_guard g(app.lock);
+            app.messages.push_back(std::string("[game-error] ") + e.what());
+        }
+    });
+}
+
+// "Aktualizovat hru": swap the engine of a game built earlier; the mechanic tightens a bolt meanwhile.
+void game_update_dialog() {
+    double t = (SDL_GetTicks() - app.game_at) / 1000.0;
+    float w = 560, h = 286, x = (W - w) / 2, y = CY + (CH - h) / 2;
+    fill(x + 4, y + 4, w, h, SDL_Color{0, 0, 0, 90});
+    fill(x, y, w, h, FACE);
+    bevel(x, y, w, h, false);
+    title_bar(x + 3, y + 3, w - 6, 22, "Aktualizace hry", icon("gear-16"));
+    float cx = x + 24, cy = y + 44;
+    bool done = app.game == App::GameUpdate::Done;
+    if (done) draw(icon("check-32"), cx + 8, cy + 8, 48, 48);
+    else draw(icon("gear-32"), cx + 8, cy + 8, 48, 48, app.game == App::GameUpdate::Running ? t * 180 : 0);
+    float tx = cx + 84, tw = w - (tx - x) - 20;
+    std::string built = app.game_info.builder_version.empty() ? "1.0.0" : app.game_info.builder_version;
+    switch (app.game) {
+    case App::GameUpdate::Offer:
+        text(bold, tx, cy, "Tvoje hra má starší engine.", INK);
+        text(regular, tx, cy + 22, "Vyměníme jen engine. Obrázky, hudba i uložené pozice", NOTE);
+#ifdef _WIN32
+        text(regular, tx, cy + 40, "zůstanou, takže to zabere jen pár vteřin.", NOTE);
+#else
+        text(regular, tx, cy + 40, "zůstanou. Zabere to minutu nebo dvě (macOS hru znovu podepíše).", NOTE);
+#endif
+        break;
+    case App::GameUpdate::Running:
+        text(bold, tx, cy, "Měníme engine...", INK);
+        text(regular, tx, cy + 22, elide(regular, app.game_status, tw), NOTE);
+        segments(tx, cy + 46, tw, 18, 0, int(t * 12));
+        break;
+    case App::GameUpdate::Done:
+        text(bold, tx, cy, "Hotovo. Hra má nejnovější engine.", INK);
+        text(regular, tx, cy + 22, "Teď už to můžeš pokazit jen hraním. Zase.", NOTE);
+        break;
+    default:
+        text(bold, tx, cy, "Aktualizace se nepovedla.", FAILC);
+        text(regular, tx, cy + 22, elide(regular, app.game_error, tw), NOTE);
+        text(regular, tx, cy + 40, "Hra zůstala, jak byla.", NOTE);
+        break;
+    }
+    const std::pair<const char*, std::string> rows[] = {{"Hra", app.game_info.app.string()},
+        {"Engine", std::string("z průvodce ") + built + "  >  " + builder_version()}};
+    float ry = cy + 92;
+    for (auto& [label, value] : rows) {
+        text(tiny, tx, ry + 2, label, NOTE);
+        text(mono, tx + 60, ry, elide(mono, value, tw - 60), INK);
+        ry += 20;
+    }
+    float by = y + h - 44;
+    auto next = [] {
+        if (app.outdated.empty()) { app.game = App::GameUpdate::None; return; }
+        app.game_info = app.outdated.front(); app.outdated.pop_front(); app.game = App::GameUpdate::Offer; app.game_at = SDL_GetTicks();
+    };
+    if (app.game == App::GameUpdate::Offer) {
+        if (button(x + w - 170, by, 150, 28, "Aktualizovat hru", true, true) || in.enter) start_game_update();
+        if (button(x + w - 290, by, 110, 28, "Teď ne")) next();
+    } else if (done) {
+        if (button(x + w - 150, by, 130, 28, "Spustit hru", true, true)) { app.result_path = app.game_info.app; launch_game(); next(); }
+        if (button(x + w - 260, by, 100, 28, "Zavřít")) next();
+    } else if (app.game == App::GameUpdate::Failed) {
+        if (button(x + w - 130, by, 110, 28, "Zavřít")) next();
+    }
+}
+
 void start_update_check() {
     if (SDL_getenv("HB_DEMO") && !SDL_getenv("HB_UPDATE_API")) return;
     if (!app.replaced.empty()) return;  // just updated: never chain into another update in the same session
@@ -979,6 +1091,8 @@ void page_checks() {
         if (!c.hint.empty()) text(small, x + 112, ry + 34, elide(small, "> " + c.hint, w - 250), ACCENT);
         if (c.state == Check::Fail && c.fix == "archive" && button(x + w - 130, ry + 6, 120, 24, "Vybrat archiv")) choose_archive();
         if (c.state == Check::Fail && c.fix == "output" && button(x + w - 130, ry + 6, 120, 24, "Jiná složka")) choose_output();
+        if (c.state == Check::Fail && c.fix == "update" && button(x + w - 150, ry + 6, 140, 24, "Aktualizovat hru", true, true))
+            offer_game_update(fs::u8path(app.output) / app_name());
         ry += rh;
         fill(x, ry - 1, w, 1, SDL_Color{224, 224, 224, 255});
     }
@@ -1375,7 +1489,15 @@ void pump_messages() {
         if (line.rfind("[upd] Download ", 0) == 0) { app.update_fraction = std::atoi(line.c_str() + 15) / 100.0; continue; }
         if (line.rfind("[upd-done] ", 0) == 0) { app.update_file = fs::u8path(line.substr(11)); app.update = App::Update::Starting; app.update_at = SDL_GetTicks(); continue; }
         if (line.rfind("[upd-error] ", 0) == 0) { app.update_error = line.substr(12); app.update = App::Update::Failed; cancelled = false; continue; }
-        if (line.rfind("[result] ", 0) == 0) { clear_session(); app.busy = false; app.result_path = fs::u8path(line.substr(9)); if (!app.character) set_stage(6); app.page = 3; }
+        if (line.rfind("[game-outdated] ", 0) == 0) {
+            if (auto info = inspect_game(fs::u8path(line.substr(16)))) app.outdated.push_back(*info);
+            if (app.game == App::GameUpdate::None && !app.outdated.empty()) { app.game_info = app.outdated.front(); app.outdated.pop_front(); app.game = App::GameUpdate::Offer; app.game_at = SDL_GetTicks(); }
+            continue;
+        }
+        if (line.rfind("[game] ", 0) == 0) { app.game_status = line.substr(7); add_log(line.substr(7)); continue; }
+        if (line.rfind("[game-done]", 0) == 0) { app.game = App::GameUpdate::Done; app.game_at = SDL_GetTicks(); remember_game(app.game_info.app); continue; }
+        if (line.rfind("[game-error] ", 0) == 0) { app.game = App::GameUpdate::Failed; app.game_error = line.substr(13); add_log("CHYBA: " + app.game_error); continue; }
+        if (line.rfind("[result] ", 0) == 0) { remember_game(fs::u8path(line.substr(9))); clear_session(); app.busy = false; app.result_path = fs::u8path(line.substr(9)); if (!app.character) set_stage(6); app.page = 3; }
         else if (line.rfind("[error] ", 0) == 0) { remember_session(true); app.busy = false; app.failed = true; app.error = line.substr(8); add_log("CHYBA: " + app.error); app.details = true; }
         else handle(line);
     }
@@ -1412,6 +1534,7 @@ int run_window(int, char**) {
     app.replaced = replaced_version;
     if (!app.replaced.empty()) app.update_at = SDL_GetTicks();
     start_update_check();
+    find_outdated_games();
     if (const char* home = SDL_GetUserFolder(SDL_FOLDER_HOME)) app.output = (fs::u8path(home) / "Games" / "Horke Leto").string();
     // Developer/README screenshots: HB_DEMO="page stage" with HB_DEMO_WORK pointing at a .builder folder.
     if (const char* demo = SDL_getenv("HB_DEMO")) {
@@ -1491,8 +1614,9 @@ int run_window(int, char**) {
         chrome();
         bool updating = app.update == App::Update::Downloading || app.update == App::Update::Starting || app.update == App::Update::Failed;
         bool resuming = app.page == 0 && app.resume && !app.details;
+        bool game_dialog = !resuming && !app.busy && app.game != App::GameUpdate::None && !app.details;
         Input real = in;
-        if (updating || resuming) { in.pressed = in.released = in.enter = false; in.wheel = 0; in.x = in.y = -1000; }  // the page behind is inert
+        if (updating || resuming || game_dialog) { in.pressed = in.released = in.enter = false; in.wheel = 0; in.x = in.y = -1000; }  // the page behind is inert
         if (app.details) log_drawer();
         else switch (app.page) {
         case 0: page_source(); break;
@@ -1502,6 +1626,7 @@ int run_window(int, char**) {
         }
         in = real;
         if (updating) update_dialog();
+        else if (game_dialog) game_update_dialog();
         else {
             if (resuming) resume_dialog();
             if (app.page == 0 || app.page == 3) update_toast();
@@ -1518,6 +1643,7 @@ int run_window(int, char**) {
     }
     if (app.worker.joinable()) app.worker.detach();
     if (app.update_worker.joinable()) app.update_worker.detach();
+    if (app.game_worker.joinable()) app.game_worker.join();  // never leave a half-swapped game behind
     SDL_Quit();
     return 0;
 }

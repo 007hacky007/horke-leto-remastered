@@ -13,4 +13,8 @@ struct Session {
 std::optional<Session> load_session();          // only when its .builder folder still exists
 void save_session(const Session& session);
 void clear_session();
+// Every game this builder finished or updated, for "Aktualizovat hru" on the next start.
+void remember_game(const fs::path& app);
+// Remembered games plus the usual places (default target, Downloads, Applications, Desktop) that exist.
+std::vector<fs::path> known_games();
 }
