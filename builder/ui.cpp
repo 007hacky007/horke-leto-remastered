@@ -3,6 +3,10 @@
 #include "image.h"
 #include "pipeline.h"
 #include "preflight.h"
+#include "session.h"
+#include "taskbar.h"
+#include <ctime>
+#include <optional>
 #include <SDL3/SDL.h>
 #include <array>
 #include <chrono>
@@ -64,7 +68,7 @@ struct Font {
         std::vector<uint8_t> bitmap(side * side);
         stbtt_pack_context pack;
         stbtt_PackBegin(&pack, bitmap.data(), side, side, 0, 1, nullptr);
-        std::vector<std::pair<int, int>> ranges{{32, 95}, {160, 223}, {0x2026, 1}, {0x2192, 1}, {0x25BA, 1}, {0x2713, 1}, {0x25BC, 1}};
+        std::vector<std::pair<int, int>> ranges{{32, 95}, {160, 223}, {0x2026, 1}, {0x2192, 1}, {0x2212, 1}, {0x25BA, 1}, {0x2713, 1}, {0x25BC, 1}};
         for (auto [first, count] : ranges) {
             std::vector<stbtt_packedchar> chars(count);
             stbtt_PackFontRange(&pack, data->data, 0, px * scale, first, count, chars.data());
@@ -325,6 +329,11 @@ struct App {
     float log_scroll = 0;
     fs::path work, result_path;
     Uint64 last_watch = 0;
+    std::optional<Session> resume;  // unfinished build offered on the first screen
+    std::string resume_error;
+    Session session;                // the running build, saved for the next start
+    Uint64 session_saved = 0;
+    bool attention = false;
 } app;
 
 // A redraw miniature cropped to its visible content, plus a 12 x 9 colour grid of it.
@@ -474,6 +483,8 @@ void watch_extract() {
     if (newest.filename().string() != app.shown && fs::exists(newest / "frame-0.png")) { app.shown = newest.filename().string(); set_picture(newest / "frame-0.png"); }
 }
 
+void remember_session(bool force = false);
+
 void start_build() {
     app.page = 2;
     app.busy = true; app.failed = false; app.details = false; app.error.clear();
@@ -486,6 +497,12 @@ void start_build() {
     request.art_archive = app.archive.empty() ? fs::path() : fs::u8path(app.archive);
     request.cleanup = app.cleanup;
     app.work = request.output / ".builder";
+    bool same = app.resume && app.resume->output == app.output;
+    app.session = Session{request.drive.empty() ? app.image : "", request.drive, app.output, app.archive, app.cleanup, 0, 0,
+                          same ? app.resume->started : int64_t(std::time(nullptr)), int64_t(std::time(nullptr))};
+    app.resume.reset();
+    app.attention = false;
+    remember_session(true);
     if (app.worker.joinable()) app.worker.join();
     app.worker = std::thread([request] {
         auto emit = [](const std::string& line) { std::lock_guard g(app.lock); app.messages.push_back(line); };
@@ -657,6 +674,77 @@ void page_source() {
     text(regular, W / 2 - text_width(regular, "Původní CD zůstane beze změn.") / 2, H - 34, "Původní CD zůstane beze změn.", NOTE);
     bool ready = app.use_drive || !app.image.empty();
     if (button(W - 230, H - 44, 210, 32, "Zkontrolovat CD a počítač", ready, true) || (in.enter && ready)) start_checks();
+}
+
+std::string when(int64_t seconds) {
+    std::time_t t = std::time_t(seconds);
+    char out[32];
+    std::strftime(out, sizeof out, "%d. %m. %Y %H:%M", std::localtime(&t));
+    return out;
+}
+
+// Windows 98 style dialog over the first screen: continue the unfinished build with its old settings.
+void resume_dialog() {
+    auto& r = *app.resume;
+    float w = 560, h = 292, x = (W - w) / 2, y = CY + (CH - h) / 2;
+    fill(x + 4, y + 4, w, h, SDL_Color{0, 0, 0, 90});
+    fill(x, y, w, h, FACE);
+    bevel(x, y, w, h, false);
+    title_bar(x + 3, y + 3, w - 6, 22, "Rozdělané sestavení", icon("disc-16"));
+    float cx = x + 20, cy = y + 40;
+    draw(icon("cdr-128"), cx, cy + 6, 72, 72);
+    float tx = cx + 92, tw = w - (tx - x) - 20;
+    text(bold, tx, cy, "Minule se sestavení nedokončilo.", INK);
+    text(regular, tx, cy + 22, "Můžeš pokračovat se stejným nastavením, hotové", NOTE);
+    text(regular, tx, cy + 40, "části se znovu nepočítají.", NOTE);
+    std::string source = r.drive.empty() ? fs::u8path(r.image).filename().string() : "mechanika " + r.drive;
+    const std::pair<const char*, std::string> rows[] = {
+        {"CD", source}, {"Cíl", r.output},
+        {"Hotovo", "asi " + std::to_string(r.percent) + " %, krok " + std::to_string(r.stage + 1) + " ze 7"},
+        {"Naposledy", when(r.updated ? r.updated : r.started)}};
+    float ry = cy + 70;
+    for (auto& [label, value] : rows) {
+        text(tiny, tx, ry + 2, label, NOTE);
+        text(mono, tx + 76, ry, elide(mono, value, tw - 76), INK);
+        ry += 20;
+    }
+    if (!app.resume_error.empty()) text(regular, cx, y + h - 74, elide(regular, app.resume_error, w - 40), FAILC);
+    float by = y + h - 44;
+    bool go = button(x + w - 150, by, 130, 28, "Pokračovat", true, true) || in.enter || SDL_getenv("HB_TEST_RESUME_GO");  // dev hook
+    bool change = button(x + w - 300, by, 140, 28, "Změnit nastavení");
+    bool drop = button(x + 20, by, 150, 28, "Smazat rozdělané");
+    if (change) {
+        // Keep the old choices as a starting point; nothing is deleted.
+        app.image = r.image; app.output = r.output; app.archive = r.archive; app.cleanup = r.cleanup;
+        app.use_drive = !r.drive.empty();
+        if (!r.image.empty()) try { app.detected = "Rozpoznáno: " + format_name(detect_format(fs::u8path(r.image))); } catch (...) {}
+        app.resume.reset();
+    } else if (drop) {
+        const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Nechat"}, {0, 1, "Smazat"}};
+        std::string message = "Smazat rozdělanou práci ve složce\n" + (fs::u8path(r.output) / ".builder").string() + "?\nPříště se začne od začátku.";
+        SDL_MessageBoxData box{SDL_MESSAGEBOX_WARNING, app.window, "Smazat rozdělané", message.c_str(), 2, buttons, nullptr};
+        int choice = 0;
+        SDL_ShowMessageBox(&box, &choice);
+        if (choice == 1) {
+            auto folder = fs::u8path(r.output) / ".builder";
+            clear_session();
+            app.resume.reset();
+            std::thread([folder] { try { remove_tree(folder); } catch (...) {} }).detach();
+        }
+    } else if (go) {
+        app.resume_error.clear();
+        if (!r.drive.empty()) {
+            auto it = std::find_if(app.drives.begin(), app.drives.end(), [&](const Drive& d) { return d.letter == r.drive; });
+            if (it == app.drives.end()) { app.resume_error = "Mechanika " + r.drive + " teď není k dispozici. Vlož CD a zkus to znovu."; return; }
+            app.use_drive = true; app.drive = int(it - app.drives.begin());
+        } else {
+            if (!fs::exists(fs::u8path(r.image))) { app.resume_error = "Obraz CD už na původním místě není. Vyber ho přes Změnit nastavení."; return; }
+            app.use_drive = false; app.image = r.image;
+        }
+        if (!r.archive.empty() && !fs::exists(fs::u8path(r.archive))) { app.resume_error = "Archiv s překresbami už na původním místě není."; return; }
+        app.output = r.output; app.archive = r.archive; app.cleanup = r.cleanup;
+        start_build();
+    }
 }
 
 void page_checks() {
@@ -984,6 +1072,22 @@ void stage_view(float x, float y, float w, float h) {
     }
 }
 
+double overall_fraction() {
+    int s = std::max(0, app.stage);
+    double total = 0;
+    for (int i = 0; i < s; ++i) total += STAGES[i].share;
+    return (total + STAGES[s].share * app.fraction) / 100;
+}
+
+void remember_session(bool force) {
+    if (!app.busy || (!force && SDL_GetTicks() - app.session_saved < 5000)) return;
+    app.session_saved = SDL_GetTicks();
+    app.session.percent = int(overall_fraction() * 100);
+    app.session.stage = std::max(0, app.stage);
+    app.session.updated = std::time(nullptr);
+    save_session(app.session);
+}
+
 void page_build() {
     int s = std::max(0, app.stage);
     float x = 22, w = W - 44, y = CY + 12;
@@ -992,9 +1096,7 @@ void page_build() {
     eyebrow(x, y, head);
     text(heading, x, y + 16, app.failed ? "Tohle se nepovedlo" : STAGES[s].title);
     text(regular, x, y + 48, elide(regular, app.failed ? app.error : STAGES[s].why, w - 140), app.failed ? FAILC : NOTE);
-    double total = 0;
-    for (int i = 0; i < s; ++i) total += STAGES[i].share;
-    total = (total + STAGES[s].share * app.fraction) / 100;
+    double total = overall_fraction();
     std::string pct = std::to_string(int(total * 100));
     text(huge, x + w - 50 - text_width(huge, pct), y + 14, pct, ACCENT);
     text(title, x + w - 24, y + 28, "%", ACCENT);
@@ -1067,8 +1169,8 @@ void pump_messages() {
         else { app.archive = path; start_checks(); }
     }
     for (auto& line : lines) {
-        if (line.rfind("[result] ", 0) == 0) { app.busy = false; app.result_path = fs::u8path(line.substr(9)); if (!app.character) set_stage(6); app.page = 3; }
-        else if (line.rfind("[error] ", 0) == 0) { app.busy = false; app.failed = true; app.error = line.substr(8); add_log("CHYBA: " + app.error); app.details = true; }
+        if (line.rfind("[result] ", 0) == 0) { clear_session(); app.busy = false; app.result_path = fs::u8path(line.substr(9)); if (!app.character) set_stage(6); app.page = 3; }
+        else if (line.rfind("[error] ", 0) == 0) { remember_session(true); app.busy = false; app.failed = true; app.error = line.substr(8); add_log("CHYBA: " + app.error); app.details = true; }
         else handle(line);
     }
 }
@@ -1100,6 +1202,7 @@ int run_window(int, char**) {
         }
     }
     app.drives = optical_drives();
+    if (!SDL_getenv("HB_DEMO")) app.resume = load_session();
     if (const char* home = SDL_GetUserFolder(SDL_FOLDER_HOME)) app.output = (fs::u8path(home) / "Games" / "Horke Leto").string();
     // Developer/README screenshots: HB_DEMO="page stage" with HB_DEMO_WORK pointing at a .builder folder.
     if (const char* demo = SDL_getenv("HB_DEMO")) {
@@ -1157,7 +1260,7 @@ int run_window(int, char**) {
                             "Opravdu přerušit? Hotová část zůstane uložená a příště naváže.", 2, buttons, nullptr};
                         int choice = 0;
                         SDL_ShowMessageBox(&box, &choice);
-                        if (choice == 1) { cancelled = true; std::_Exit(0); }
+                        if (choice == 1) { remember_session(true); cancelled = true; taskbar_progress(app.window, TaskbarState::None, 0); std::_Exit(0); }
                     } else running = false;
                     break;
                 case SDL_EVENT_MOUSE_MOTION: in.x = e.motion.x; in.y = e.motion.y; break;
@@ -1169,12 +1272,25 @@ int run_window(int, char**) {
             } while (SDL_PollEvent(&e));
         }
         pump_messages();
+        remember_session();
+        if (app.busy) taskbar_progress(app.window, TaskbarState::Normal, overall_fraction());
+        else if (app.failed) taskbar_progress(app.window, TaskbarState::Error, 1);
+        else taskbar_progress(app.window, TaskbarState::None, 0);
+        if (app.page == 3 && !app.attention) { app.attention = true; taskbar_attention(app.window); }
         watch_extract();
         fill(0, 0, W, H, FACE);
         chrome();
         if (app.details) log_drawer();
         else switch (app.page) {
-        case 0: page_source(); break;
+        case 0:
+            if (app.resume) {
+                Input real = in;
+                in.pressed = in.released = in.enter = false; in.wheel = 0; in.x = in.y = -1000;  // the page behind is inert
+                page_source();
+                in = real;
+                resume_dialog();
+            } else page_source();
+            break;
         case 1: page_checks(); break;
         case 2: page_build(); break;
         default: page_done(); break;

@@ -29,7 +29,15 @@ set(HB_FONTS ${HB_ROOT}/tools/vendor/dejavu-fonts/ttf/DejaVuSans.ttf ${HB_ROOT}/
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp
   COMMAND ${CMAKE_COMMAND} "-DFILES=${HB_ASSETS};${HB_FONTS}" -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake
   DEPENDS ${HB_ASSETS} ${HB_FONTS} ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake VERBATIM)
-add_executable(horke-leto-builder WIN32 MACOSX_BUNDLE main.cpp ui.cpp preflight.cpp ${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp)
+add_executable(horke-leto-builder WIN32 MACOSX_BUNDLE main.cpp ui.cpp preflight.cpp session.cpp ${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp)
+if(APPLE)
+  target_sources(horke-leto-builder PRIVATE taskbar_mac.mm)
+  set_source_files_properties(taskbar_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  target_link_libraries(horke-leto-builder PRIVATE "-framework AppKit")
+elseif(WIN32)
+  target_sources(horke-leto-builder PRIVATE taskbar_win.cpp)
+  target_link_libraries(horke-leto-builder PRIVATE ole32 uuid)
+endif()
 target_link_libraries(horke-leto-builder PRIVATE hb-core)
 set_target_properties(horke-leto-builder PROPERTIES OUTPUT_NAME "Horke Leto Builder"
   MACOSX_BUNDLE_BUNDLE_NAME "Horké léto Builder" MACOSX_BUNDLE_GUI_IDENTIFIER "org.horkeleto.builder"
