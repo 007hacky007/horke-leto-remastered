@@ -140,7 +140,7 @@ The builder speaks Czech, like the game.
 | --- | --- | --- |
 | System | macOS 13 or newer, Apple silicon (M1 or later) | Windows 10 or 11, 64-bit |
 | Graphics for building | Built in, nothing to install | A graphics card with an up-to-date driver (Vulkan) |
-| Free disk space | About 40 GB while building, 9 GB for the finished game | Same |
+| Free disk space | About 45 GB while building, 17 GB for the finished game | Same |
 | Time | About 75 minutes on an M1 Pro | 1 to 2 hours, depending on the graphics card |
 | Internet | Once, to download the redrawn art (about 400 MB) | Same |
 

@@ -8,7 +8,7 @@
 #endif
 
 namespace hb {
-constexpr double NEED_GB = 40, FINAL_GB = 9;
+constexpr double NEED_GB = 45, FINAL_GB = 17;
 
 static Check check_disc(const fs::path& image, const std::string& drive, const json& pins) {
     Check c{"disc", "Správné vydání hry"};

@@ -737,7 +737,7 @@ void page_source() {
     if (button(x + w - 92, fy + 12, 92, 28, "Změnit")) choose_output();
     fill(x, fy + 52, w, 1, SHADOW); fill(x, fy + 53, w, 1, LIGHT);
     if (checkbox(x, fy + 66, "Po skončení odstranit dočasné soubory", app.cleanup)) app.cleanup = !app.cleanup;
-    text(regular, x, fy + 92, "Potřebuješ asi 40 GB volného místa pro dočasné soubory. Výsledná hotová hra zabere asi 9 GB.", NOTE);
+    text(regular, x, fy + 92, "Potřebuješ asi 45 GB volného místa pro dočasné soubory. Výsledná hotová hra zabere asi 17 GB.", NOTE);
     bool ready = app.use_drive || !app.image.empty();
     if (button(W - 230, H - 44, 210, 32, "Další", ready, true) || (in.enter && ready)) start_checks();
 }

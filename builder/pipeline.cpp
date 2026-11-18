@@ -346,7 +346,7 @@ fs::path update_game(const fs::path& app, const Emit& emit) {
         fill_palette_variants(tools, to, work, emit);
         write_build_info(stage, tools);
         emit("[detail] Podepisuji aktualizovanou hru");
-        sign_game(stage, false);  // verifying would read all 9 GB again; the build path verifies
+        sign_game(stage, false);  // verifying would read all 17 GB again; the build path verifies
         fs::rename(app, old);
         fs::rename(stage, app);
     } catch (...) {
