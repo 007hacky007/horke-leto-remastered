@@ -95,6 +95,93 @@ void remove_tree(const fs::path& path) {
     fs::remove_all(path, ec);
 }
 
+#ifdef _WIN32
+namespace {
+std::wstring widen(const std::string& s) {
+    if (s.empty()) return {};
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
+    std::wstring w(size_t(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
+    return w;
+}
+
+// Quote one argument the way CommandLineToArgvW and the C runtime split it back.
+void append_quoted(std::wstring& line, const std::wstring& arg) {
+    if (!line.empty()) line += L' ';
+    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) { line += arg; return; }
+    line += L'"';
+    size_t slashes = 0;
+    for (wchar_t c : arg) {
+        if (c == L'\\') { ++slashes; continue; }
+        line.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+        slashes = 0;
+        line += c;
+    }
+    line.append(slashes * 2, L'\\');
+    line += L'"';
+}
+}
+
+// Windows: start console tools (upscaler, hl-tool) without a console window of their own.
+// SDL can only hide it in "background" mode, which throws the exit code away.
+int run_process(const std::vector<std::string>& argv, const fs::path& log) {
+    std::wstring line;
+    for (auto& a : argv) append_quoted(line, widen(a));
+    SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+    HANDLE null_in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
+    HANDLE read_end = nullptr, write_end = nullptr;
+    if (log.empty()) {
+        write_end = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
+    } else if (CreatePipe(&read_end, &write_end, &inherit, 0)) {
+        SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+    }
+    auto close = [](HANDLE& h) { if (h && h != INVALID_HANDLE_VALUE) CloseHandle(h); h = nullptr; };
+    if (null_in == INVALID_HANDLE_VALUE || !write_end || write_end == INVALID_HANDLE_VALUE) {
+        close(null_in); close(read_end); close(write_end);
+        throw std::runtime_error("Nelze spustit " + argv[0] + ": nelze připravit vstup a výstup");
+    }
+    // Hand the child only these two handles, so parallel runs do not keep each other's pipes open.
+    HANDLE handles[2] = {null_in, write_end};
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<char> attributes(size);
+    auto* list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    bool listed = InitializeProcThreadAttributeList(list, 1, 0, &size) &&
+                  UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles, sizeof(handles), nullptr, nullptr);
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = null_in;
+    startup.StartupInfo.hStdOutput = write_end;
+    startup.StartupInfo.hStdError = write_end;
+    startup.lpAttributeList = listed ? list : nullptr;
+    PROCESS_INFORMATION info{};
+    DWORD flags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | (listed ? EXTENDED_STARTUPINFO_PRESENT : 0);
+    BOOL started = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE, flags, nullptr, nullptr,
+                                  &startup.StartupInfo, &info);
+    DWORD error = GetLastError();
+    if (listed) DeleteProcThreadAttributeList(list);
+    close(null_in); close(write_end);
+    if (!started) {
+        close(read_end);
+        throw std::runtime_error("Nelze spustit " + argv[0] + ": chyba " + std::to_string(error));
+    }
+    CloseHandle(info.hThread);
+    if (read_end) {
+        std::string output;
+        char buffer[65536];
+        DWORD got = 0;
+        while (ReadFile(read_end, buffer, sizeof(buffer), &got, nullptr) && got > 0) output.append(buffer, got);
+        close(read_end);
+        write_file(log, output.data(), output.size());
+    }
+    WaitForSingleObject(info.hProcess, INFINITE);
+    DWORD exit = 0;
+    GetExitCodeProcess(info.hProcess, &exit);
+    CloseHandle(info.hProcess);
+    return int(exit);
+}
+#else
 int run_process(const std::vector<std::string>& argv, const fs::path& log) {
     std::vector<const char*> args;
     for (auto& a : argv) args.push_back(a.c_str());
@@ -119,6 +206,7 @@ int run_process(const std::vector<std::string>& argv, const fs::path& log) {
     SDL_DestroyProcess(process);
     return exit;
 }
+#endif
 
 fs::path executable_path() {
 #ifdef _WIN32
